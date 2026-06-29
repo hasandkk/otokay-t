@@ -13,8 +13,11 @@ yazdırılabilir / WhatsApp'a gönderilebilir özet.
 - **Arama:** plaka, müşteri adı veya telefona göre — üstteki tek kutudan.
 - **İş emri (servis kaydı):** durum takibi (Beklemede / Devam Ediyor / Tamamlandı / Teslim Edildi).
 - **İşçilik + Parça** kalemleri ekle/sil (Enter ile hızlı ekleme); toplam ve KDV otomatik hesaplanır.
-- **KDV:** her iş emrinde oran ayarlanabilir + "fiyatlara KDV dahil mi?" seçilebilir.
-  Varsayılan oran Ayarlar'dan değiştirilir (varsayılan %20).
+- **KDV:** fiyatlar her zaman **net (KDV hariç)** girilir, KDV otomatik üzerine eklenir.
+  Her iş emrinde KDV oranı ayarlanabilir. **"Kalemleri KDV dahil göster"** işaretlenirse
+  tüm işçilik ve parça satırları (birim + tutar) **KDV eklenmiş** halde gösterilir;
+  genel toplam değişmez. Varsayılan oran Ayarlar'dan değiştirilir (varsayılan %20).
+- **📋 E-Tablo kısayolu:** üst bardaki butonla verinin tutulduğu Google E-Tablo doğrudan açılır.
 - **Araç geçmişi:** o araca açılmış tüm iş emirleri, tarih + tutar; tıkla → tüm kalemleri gör.
   Ayrıca "ömür boyu toplam" satırı.
 - **📊 Raporlar:** tüm iş emirleri tek ekranda — plaka/müşteri/iş emri no araması,

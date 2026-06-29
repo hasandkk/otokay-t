@@ -245,10 +245,13 @@ function saveSettings(data) {
  * AÇILIŞ VERİSİ (özet, önbellekli)
  * ========================================================================= */
 function getBootstrapData() {
+  var url = '';
+  try { url = getSpreadsheet_().getUrl(); } catch (e) {}
   return {
     settings: getSettings(),
     durumlar: DURUMLAR,
-    stats: getStats_()
+    stats: getStats_(),
+    sheetUrl: url
   };
 }
 
@@ -759,19 +762,14 @@ function recalcService_(servisId) {
     .filter(function (p) { return p['ServisID'] === servisId; })
     .reduce(function (sum, p) { return sum + num_(p['Tutar']); }, 0);
 
+  // Fiyatlar her zaman NET (KDV hariç) girilir; KDV daima üzerine eklenir.
+  // "KDV Dahil" yalnızca bir GÖSTERİM bayrağıdır (kalemleri KDV eklenmiş gösterir),
+  // hesaplanan toplamları değiştirmez.
   var araToplam = iscilikToplam + parcaToplam;
   var oran = num_(servis['KDV Orani']) / 100;
   var kdvDahil = servis['KDV Dahil'] === true || servis['KDV Dahil'] === 'TRUE';
-  var kdvTutar, genelToplam;
-  if (kdvDahil) {
-    // Girilen fiyatlar KDV dahil: KDV'yi içinden ayrıştır
-    genelToplam = araToplam;
-    kdvTutar = araToplam - (araToplam / (1 + oran));
-  } else {
-    // Girilen fiyatlar KDV hariç: üzerine ekle
-    kdvTutar = araToplam * oran;
-    genelToplam = araToplam + kdvTutar;
-  }
+  var kdvTutar = araToplam * oran;
+  var genelToplam = araToplam + kdvTutar;
   var sh = getSheet_(SHEETS.SERVISLER);
   var H = HEADERS.ServisKayitlari;
   // Tek setValues ile bitişik kolonları toplu yaz (Iscilik Toplam ... Genel Toplam)

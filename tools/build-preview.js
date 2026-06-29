@@ -87,8 +87,9 @@ const mock = `
     var s = byId(DB.servisler,'ServisID',servisId); if(!s) return;
     var it = DB.iscilikler.filter(function(i){return i.ServisID===servisId;}).reduce(function(a,i){return a+num(i.Tutar);},0);
     var pt = DB.parcalar.filter(function(p){return p.ServisID===servisId;}).reduce(function(a,p){return a+num(p.Tutar);},0);
-    var ara = it+pt, oran = num(s.KdvOrani)/100, kdv, gen;
-    if(s.KdvDahil){ gen = ara; kdv = ara - (ara/(1+oran)); } else { kdv = ara*oran; gen = ara+kdv; }
+    // Fiyatlar her zaman NET girilir; KDV daima üzerine eklenir. KdvDahil sadece gösterim bayrağı.
+    var ara = it+pt, oran = num(s.KdvOrani)/100;
+    var kdv = ara*oran, gen = ara+kdv;
     s.IscilikToplam=r2(it); s.ParcaToplam=r2(pt); s.KdvTutar=r2(kdv); s.GenelToplam=r2(gen);
   }
   // İlk yüklemede toplamları hesapla
@@ -97,7 +98,7 @@ const mock = `
   var Backend = {
     getBootstrapData: function(){
       var acik = DB.servisler.filter(function(s){return s.Durum!=='Teslim Edildi';}).length;
-      return { settings:DB.settings, durumlar:DURUMLAR, stats:{
+      return { settings:DB.settings, durumlar:DURUMLAR, sheetUrl:'', stats:{
         musteriSayisi: DB.musteriler.filter(function(m){return m.Aktif;}).length,
         aracSayisi: DB.araclar.filter(function(a){return a.Aktif;}).length,
         acikServis: acik, toplamServis: DB.servisler.length
@@ -241,9 +242,6 @@ const html =
 ${styles}
 </head>
 <body>
-<div style="background:#7c2d12;color:#fff;text-align:center;padding:6px;font-size:13px">
-  ⚠️ ÖNİZLEME MODU — sahte verilerle, kayıtlar kalıcı değildir. Gerçek kullanım için Apps Script kurulumu (README) gerekir.
-</div>
 ${bodyInner}
 ${mock}
 ${appJs}

@@ -220,9 +220,6 @@
 
 </head>
 <body>
-<div style="background:#7c2d12;color:#fff;text-align:center;padding:6px;font-size:13px">
-  ⚠️ ÖNİZLEME MODU — sahte verilerle, kayıtlar kalıcı değildir. Gerçek kullanım için Apps Script kurulumu (README) gerekir.
-</div>
 
   <!-- ÜST BAR -->
   <header class="topbar">
@@ -236,6 +233,7 @@
              oninput="App.onSearchInput()" onkeydown="App.onSearchKey(event)">
       <div id="searchResults" class="search-results hidden"></div>
     </div>
+    <button class="icon-btn" id="sheetBtn" title="Google E-Tablo'yu aç" onclick="App.openSheet()">📋</button>
     <button class="icon-btn" id="themeBtn" title="Tema değiştir" onclick="App.toggleTheme()">🌙</button>
     <button class="icon-btn" title="Ayarlar" onclick="App.openSettings()">⚙️</button>
   </header>
@@ -316,8 +314,9 @@
     var s = byId(DB.servisler,'ServisID',servisId); if(!s) return;
     var it = DB.iscilikler.filter(function(i){return i.ServisID===servisId;}).reduce(function(a,i){return a+num(i.Tutar);},0);
     var pt = DB.parcalar.filter(function(p){return p.ServisID===servisId;}).reduce(function(a,p){return a+num(p.Tutar);},0);
-    var ara = it+pt, oran = num(s.KdvOrani)/100, kdv, gen;
-    if(s.KdvDahil){ gen = ara; kdv = ara - (ara/(1+oran)); } else { kdv = ara*oran; gen = ara+kdv; }
+    // Fiyatlar her zaman NET girilir; KDV daima üzerine eklenir. KdvDahil sadece gösterim bayrağı.
+    var ara = it+pt, oran = num(s.KdvOrani)/100;
+    var kdv = ara*oran, gen = ara+kdv;
     s.IscilikToplam=r2(it); s.ParcaToplam=r2(pt); s.KdvTutar=r2(kdv); s.GenelToplam=r2(gen);
   }
   // İlk yüklemede toplamları hesapla
@@ -326,7 +325,7 @@
   var Backend = {
     getBootstrapData: function(){
       var acik = DB.servisler.filter(function(s){return s.Durum!=='Teslim Edildi';}).length;
-      return { settings:DB.settings, durumlar:DURUMLAR, stats:{
+      return { settings:DB.settings, durumlar:DURUMLAR, sheetUrl:'', stats:{
         musteriSayisi: DB.musteriler.filter(function(m){return m.Aktif;}).length,
         aracSayisi: DB.araclar.filter(function(a){return a.Aktif;}).length,
         acikServis: acik, toplamServis: DB.servisler.length
@@ -469,6 +468,7 @@ var App = (function () {
     customerPage: 1,
     customerQuery: '',
     searchTimer: null,
+    sheetUrl: '',
     report: { q: '', durum: '', baslangic: '', bitis: '', page: 1 }
   };
 
@@ -509,6 +509,7 @@ var App = (function () {
     call('getBootstrapData').then(function (data) {
       state.settings = data.settings;
       state.durumlar = data.durumlar;
+      state.sheetUrl = data.sheetUrl || '';
       $('#brandName').textContent = data.settings.firmaAdi || 'Teminat Group';
       applyTheme(data.settings.tema || 'dark');
       renderHome(data.stats);
@@ -547,6 +548,12 @@ var App = (function () {
     var next = state.settings.tema === 'light' ? 'dark' : 'light';
     applyTheme(next);                       // anında uygula
     call('setTheme', [next]).catch(function () {}); // arka planda kaydet
+  }
+
+  /* ---- Google E-Tablo kısayolu ---- */
+  function openSheet() {
+    if (state.sheetUrl) window.open(state.sheetUrl, '_blank');
+    else toast('E-Tablo bağlantısı bulunamadı (kurulumu tamamlayın).', 'err');
   }
 
   /* =======================================================================
@@ -897,6 +904,9 @@ var App = (function () {
   function renderService(d) {
     var s = d.servis, a = d.arac, m = d.musteri;
     var araToplam = s.IscilikToplam + s.ParcaToplam;
+    // KDV dahil işaretliyse kalemler/satırlar KDV eklenmiş gösterilir.
+    var k = s.KdvDahil ? (1 + s.KdvOrani / 100) : 1;
+    var kdvDahil = s.KdvDahil;
     var durumOpts = state.durumlar.map(function (x) {
       return '<option ' + (s.Durum === x ? 'selected' : '') + '>' + x + '</option>';
     }).join('');
@@ -917,9 +927,9 @@ var App = (function () {
       /* İŞÇİLİK */
       '<div class="card">' +
         '<h3>🔧 İşçilik</h3>' +
-        '<table><thead><tr><th>Açıklama</th><th class="right">Tutar</th><th></th></tr></thead><tbody>' +
+        '<table><thead><tr><th>Açıklama</th><th class="right">Tutar' + (kdvDahil ? ' <span class="muted">(KDV dahil)</span>' : '') + '</th><th></th></tr></thead><tbody>' +
         (d.iscilikler.length ? d.iscilikler.map(function (i) {
-          return '<tr><td>' + esc(i.Aciklama) + '</td><td class="right">' + money(i.Tutar) + '</td>' +
+          return '<tr><td>' + esc(i.Aciklama) + '</td><td class="right">' + money(i.Tutar * k) + '</td>' +
             '<td class="right"><button class="btn red sm" onclick="App.delIscilik(\'' + s.ServisID + '\',\'' + i.KalemID + '\')">✕</button></td></tr>';
         }).join('') : '<tr><td colspan="3" class="muted">Kalem yok.</td></tr>') +
         '</tbody></table>' +
@@ -933,12 +943,12 @@ var App = (function () {
       /* PARÇA */
       '<div class="card">' +
         '<h3>🧩 Parça</h3>' +
-        '<table><thead><tr><th>Parça</th><th class="right hide-sm">Adet</th><th class="right hide-sm">Birim</th><th class="right">Tutar</th><th></th></tr></thead><tbody>' +
+        '<table><thead><tr><th>Parça</th><th class="right hide-sm">Adet</th><th class="right hide-sm">Birim' + (kdvDahil ? ' <span class="muted">(KDV\'li)</span>' : '') + '</th><th class="right">Tutar' + (kdvDahil ? ' <span class="muted">(KDV\'li)</span>' : '') + '</th><th></th></tr></thead><tbody>' +
         (d.parcalar.length ? d.parcalar.map(function (p) {
           return '<tr><td>' + esc(p.ParcaAdi) + '</td>' +
             '<td class="right hide-sm">' + p.Adet + '</td>' +
-            '<td class="right hide-sm">' + money(p.BirimFiyat) + '</td>' +
-            '<td class="right">' + money(p.Tutar) + '</td>' +
+            '<td class="right hide-sm">' + money(p.BirimFiyat * k) + '</td>' +
+            '<td class="right">' + money(p.Tutar * k) + '</td>' +
             '<td class="right"><button class="btn red sm" onclick="App.delParca(\'' + s.ServisID + '\',\'' + p.KalemID + '\')">✕</button></td></tr>';
         }).join('') : '<tr><td colspan="5" class="muted">Kalem yok.</td></tr>') +
         '</tbody></table>' +
@@ -953,14 +963,18 @@ var App = (function () {
       /* TOPLAM + KDV */
       '<div class="card">' +
         '<h3>💰 Toplam</h3>' +
-        '<div class="total-line"><span>İşçilik</span><span>' + money(s.IscilikToplam) + '</span></div>' +
-        '<div class="total-line"><span>Parça</span><span>' + money(s.ParcaToplam) + '</span></div>' +
-        '<div class="total-line"><span>Ara Toplam</span><span>' + money(araToplam) + '</span></div>' +
+        (kdvDahil
+          ? '<div class="total-line"><span>İşçilik <span class="muted">(KDV dahil)</span></span><span>' + money(s.IscilikToplam * k) + '</span></div>' +
+            '<div class="total-line"><span>Parça <span class="muted">(KDV dahil)</span></span><span>' + money(s.ParcaToplam * k) + '</span></div>' +
+            '<div class="total-line"><span class="muted">Net (KDV hariç)</span><span class="muted">' + money(araToplam) + '</span></div>'
+          : '<div class="total-line"><span>İşçilik</span><span>' + money(s.IscilikToplam) + '</span></div>' +
+            '<div class="total-line"><span>Parça</span><span>' + money(s.ParcaToplam) + '</span></div>' +
+            '<div class="total-line"><span>Ara Toplam</span><span>' + money(araToplam) + '</span></div>') +
         '<div class="row" style="margin:10px 0;align-items:flex-end">' +
           '<div style="flex:1"><label>KDV Oranı (%)</label><input id="kdvOran" inputmode="decimal" value="' + s.KdvOrani + '" onchange="App.saveKdv(\'' + s.ServisID + '\')"></div>' +
-          '<div style="flex:2" class="checkbox-field"><input type="checkbox" id="kdvDahil" ' + (s.KdvDahil ? 'checked' : '') + ' onchange="App.saveKdv(\'' + s.ServisID + '\')"><label style="margin:0">Fiyatlara KDV dahil</label></div>' +
+          '<div style="flex:2" class="checkbox-field"><input type="checkbox" id="kdvDahil" ' + (s.KdvDahil ? 'checked' : '') + ' onchange="App.saveKdv(\'' + s.ServisID + '\')"><label style="margin:0">Kalemleri KDV dahil göster</label></div>' +
         '</div>' +
-        '<div class="total-line"><span>KDV (' + s.KdvOrani + '%)' + (s.KdvDahil ? ' <span class="muted">dahil</span>' : '') + '</span><span>' + money(s.KdvTutar) + '</span></div>' +
+        '<div class="total-line"><span>' + (kdvDahil ? 'İçindeki ' : '') + 'KDV (' + s.KdvOrani + '%)</span><span>' + money(s.KdvTutar) + '</span></div>' +
         '<div class="total-line grand"><span>GENEL TOPLAM</span><span>' + money(s.GenelToplam) + '</span></div>' +
         '<div class="btn-row" style="margin-top:14px">' +
           '<button class="btn green" onclick="App.showSummary(\'' + s.ServisID + '\')">📄 Müşteri Özeti</button>' +
@@ -1006,6 +1020,8 @@ var App = (function () {
     call('getSummary', [servisId]).then(function (d) {
       var s = d.servis, a = d.arac, m = d.musteri, f = d.firma;
       var araToplam = s.IscilikToplam + s.ParcaToplam;
+      var k = s.KdvDahil ? (1 + s.KdvOrani / 100) : 1;
+      var kdvDahil = s.KdvDahil;
 
       var body =
         '<div class="summary-sheet" id="summarySheet">' +
@@ -1021,21 +1037,25 @@ var App = (function () {
           '<b>Araç:</b> ' + esc(a.Plaka) + ' — ' + esc(a.Marka) + ' ' + esc(a.Model) + ' ' + esc(a.Yil || '') + ' (' + esc(a.Tur) + ')</p>' +
           (s.GenelNot ? '<p><b>Not:</b> ' + esc(s.GenelNot) + '</p>' : '') +
 
-          (d.iscilikler.length ? '<h3>İşçilik</h3><table><tbody>' +
+          (d.iscilikler.length ? '<h3>İşçilik</h3><table><thead><tr><th>Açıklama</th><th class="right">Tutar' + (kdvDahil ? ' (KDV dahil)' : '') + '</th></tr></thead><tbody>' +
             d.iscilikler.map(function (i) {
-              return '<tr><td>' + esc(i.Aciklama) + '</td><td class="right">' + money(i.Tutar) + '</td></tr>';
+              return '<tr><td>' + esc(i.Aciklama) + '</td><td class="right">' + money(i.Tutar * k) + '</td></tr>';
             }).join('') + '</tbody></table>' : '') +
 
-          (d.parcalar.length ? '<h3>Parça</h3><table><thead><tr><th>Parça</th><th class="right">Adet</th><th class="right">Birim</th><th class="right">Tutar</th></tr></thead><tbody>' +
+          (d.parcalar.length ? '<h3>Parça</h3><table><thead><tr><th>Parça</th><th class="right">Adet</th><th class="right">Birim' + (kdvDahil ? ' (KDV\'li)' : '') + '</th><th class="right">Tutar' + (kdvDahil ? ' (KDV\'li)' : '') + '</th></tr></thead><tbody>' +
             d.parcalar.map(function (p) {
-              return '<tr><td>' + esc(p.ParcaAdi) + '</td><td class="right">' + p.Adet + '</td><td class="right">' + money(p.BirimFiyat) + '</td><td class="right">' + money(p.Tutar) + '</td></tr>';
+              return '<tr><td>' + esc(p.ParcaAdi) + '</td><td class="right">' + p.Adet + '</td><td class="right">' + money(p.BirimFiyat * k) + '</td><td class="right">' + money(p.Tutar * k) + '</td></tr>';
             }).join('') + '</tbody></table>' : '') +
 
           '<div style="margin-top:16px">' +
-            '<div class="total-line"><span>İşçilik Toplam</span><span>' + money(s.IscilikToplam) + '</span></div>' +
-            '<div class="total-line"><span>Parça Toplam</span><span>' + money(s.ParcaToplam) + '</span></div>' +
-            '<div class="total-line"><span>Ara Toplam</span><span>' + money(araToplam) + '</span></div>' +
-            '<div class="total-line"><span>KDV (' + s.KdvOrani + '%)' + (s.KdvDahil ? ' dahil' : '') + '</span><span>' + money(s.KdvTutar) + '</span></div>' +
+            (kdvDahil
+              ? '<div class="total-line"><span>İşçilik (KDV dahil)</span><span>' + money(s.IscilikToplam * k) + '</span></div>' +
+                '<div class="total-line"><span>Parça (KDV dahil)</span><span>' + money(s.ParcaToplam * k) + '</span></div>' +
+                '<div class="total-line"><span class="muted">İçindeki KDV (' + s.KdvOrani + '%)</span><span class="muted">' + money(s.KdvTutar) + '</span></div>'
+              : '<div class="total-line"><span>İşçilik Toplam</span><span>' + money(s.IscilikToplam) + '</span></div>' +
+                '<div class="total-line"><span>Parça Toplam</span><span>' + money(s.ParcaToplam) + '</span></div>' +
+                '<div class="total-line"><span>Ara Toplam</span><span>' + money(araToplam) + '</span></div>' +
+                '<div class="total-line"><span>KDV (' + s.KdvOrani + '%)</span><span>' + money(s.KdvTutar) + '</span></div>') +
             '<div class="total-line grand"><span>GENEL TOPLAM</span><span>' + money(s.GenelToplam) + '</span></div>' +
           '</div>' +
         '</div>';
@@ -1050,24 +1070,26 @@ var App = (function () {
 
   function sendWhatsApp(d) {
     var s = d.servis, a = d.arac, m = d.musteri, f = d.firma;
+    var k = s.KdvDahil ? (1 + s.KdvOrani / 100) : 1;
+    var kdvDahil = s.KdvDahil;
     var L = [];
     L.push('*' + f.firmaAdi + '*');
     L.push('İş Emri: ' + s.ServisNo + ' (' + s.Tarih + ')');
     L.push('Araç: ' + a.Plaka + ' - ' + a.Marka + ' ' + a.Model);
     L.push('');
     if (d.iscilikler.length) {
-      L.push('🔧 *İşçilik*');
-      d.iscilikler.forEach(function (i) { L.push('• ' + i.Aciklama + ': ' + money(i.Tutar)); });
+      L.push('🔧 *İşçilik*' + (kdvDahil ? ' (KDV dahil)' : ''));
+      d.iscilikler.forEach(function (i) { L.push('• ' + i.Aciklama + ': ' + money(i.Tutar * k)); });
       L.push('');
     }
     if (d.parcalar.length) {
-      L.push('🧩 *Parça*');
-      d.parcalar.forEach(function (p) { L.push('• ' + p.ParcaAdi + ' x' + p.Adet + ': ' + money(p.Tutar)); });
+      L.push('🧩 *Parça*' + (kdvDahil ? ' (KDV dahil)' : ''));
+      d.parcalar.forEach(function (p) { L.push('• ' + p.ParcaAdi + ' x' + p.Adet + ': ' + money(p.Tutar * k)); });
       L.push('');
     }
-    L.push('İşçilik: ' + money(s.IscilikToplam));
-    L.push('Parça: ' + money(s.ParcaToplam));
-    L.push('KDV (' + s.KdvOrani + '%)' + (s.KdvDahil ? ' dahil' : '') + ': ' + money(s.KdvTutar));
+    L.push('İşçilik: ' + money(s.IscilikToplam * k));
+    L.push('Parça: ' + money(s.ParcaToplam * k));
+    L.push((kdvDahil ? 'İçindeki ' : '') + 'KDV (' + s.KdvOrani + '%): ' + money(s.KdvTutar));
     L.push('*GENEL TOPLAM: ' + money(s.GenelToplam) + '*');
 
     var text = encodeURIComponent(L.join('\n'));
@@ -1150,7 +1172,7 @@ var App = (function () {
   /* ---- Dışa açılan API ---- */
   return {
     init: init, goHome: goHome, tab: tab,
-    toggleTheme: toggleTheme,
+    toggleTheme: toggleTheme, openSheet: openSheet,
     loadReports: loadReports, setReportFilter: setReportFilter,
     reportThisMonth: reportThisMonth, reportClear: reportClear, reportPage: reportPage,
     onSearchInput: onSearchInput, onSearchKey: onSearchKey,
