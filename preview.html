@@ -469,6 +469,7 @@ var App = (function () {
     customerQuery: '',
     searchTimer: null,
     sheetUrl: '',
+    currentView: '',
     report: { q: '', durum: '', baslangic: '', bitis: '', page: 1 }
   };
 
@@ -481,6 +482,39 @@ var App = (function () {
         .withFailureHandler(function (e) { reject(e); })
         [fn].apply(null, args);
     });
+  }
+
+  /* =======================================================================
+   * İSTEMCİ ÖNBELLEĞİ (perceived performance)
+   * Uygulama tek kullanıcılı olduğundan, açılan ekranlar hafızada tutulur ve
+   * tekrar gidildiğinde ANINDA gösterilir; arka planda tazelenir (stale-while-
+   * revalidate). Kendi yaptığımız değişikliklerde ilgili önbellek temizlenir.
+   * ===================================================================== */
+  var dataCache = {};      // key -> { v: value, t: timestamp }
+  var SWR_TTL = 60000;     // 60 sn: bu süre içinde taze sayılır, arka plan yenilemesi atlanır
+  function cacheClear(prefix) {
+    if (!prefix) { dataCache = {}; return; }
+    Object.keys(dataCache).forEach(function (key) {
+      if (key.indexOf(prefix) === 0) delete dataCache[key];
+    });
+  }
+  function cachePut(key, val) { dataCache[key] = { v: val, t: Date.now() }; }
+
+  /**
+   * Stale-while-revalidate yükleyici (girdi alanı olmayan salt-okunur ekranlar için).
+   * Önbellekteki veriyi hemen render eder, arka planda tazeler, kullanıcı hâlâ aynı
+   * ekrandaysa taze veriyle yeniden render eder.
+   */
+  function swr(key, fn, args, render) {
+    state.currentView = key;
+    var c = dataCache[key];
+    if (c) render(c.v);
+    else setView('<div class="loading">Yükleniyor…</div>');
+    if (c && (Date.now() - c.t) < SWR_TTL) return; // taze: ağ isteğini atla
+    call(fn, args).then(function (res) {
+      cachePut(key, res);
+      if (state.currentView === key) render(res);
+    }).catch(function (e) { if (!c) failHandler(e); });
   }
 
   /* ---- Yardımcılar ---- */
@@ -510,8 +544,10 @@ var App = (function () {
       state.settings = data.settings;
       state.durumlar = data.durumlar;
       state.sheetUrl = data.sheetUrl || '';
+      cachePut('boot', data);
       $('#brandName').textContent = data.settings.firmaAdi || 'Teminat Group';
       applyTheme(data.settings.tema || 'dark');
+      state.currentView = 'boot';
       renderHome(data.stats);
     }).catch(function (e) {
       setView('<div class="card"><h2>Kurulum gerekli</h2><p>' + esc(e.message || e) +
@@ -521,8 +557,11 @@ var App = (function () {
 
   function goHome() {
     activateTab('home');
-    setView('<div class="loading">Yükleniyor…</div>');
-    call('getBootstrapData').then(function (d) { renderHome(d.stats); });
+    swr('boot', 'getBootstrapData', [], function (d) {
+      state.settings = d.settings;
+      state.sheetUrl = d.sheetUrl || '';
+      renderHome(d.stats);
+    });
   }
 
   function tab(name) {
@@ -589,15 +628,15 @@ var App = (function () {
    * ===================================================================== */
   var reportTimer = null;
   function loadReports() {
-    setView('<div class="loading">Yükleniyor…</div>');
     var r = state.report;
-    call('getAllServices', [{ q: r.q, durum: r.durum, baslangic: r.baslangic, bitis: r.bitis, page: r.page, pageSize: 25 }])
-      .then(renderReports).catch(failHandler);
+    var f = { q: r.q, durum: r.durum, baslangic: r.baslangic, bitis: r.bitis, page: r.page, pageSize: 25 };
+    swr('rep:' + JSON.stringify(f), 'getAllServices', [f], renderReports);
   }
   function setReportFilter(key, val) {
     state.report[key] = val; state.report.page = 1;
+    if (key === 'q') state._refocusReport = true;
     clearTimeout(reportTimer);
-    reportTimer = setTimeout(loadReports, key === 'q' ? 300 : 0);
+    reportTimer = setTimeout(loadReports, key === 'q' ? 250 : 0);
   }
   function reportThisMonth() {
     var d = new Date();
@@ -628,7 +667,7 @@ var App = (function () {
       '<div class="card" style="margin-top:14px">' +
         '<div class="row">' +
           '<div style="flex:2"><label>Ara (plaka / müşteri / iş emri no)</label>' +
-            '<input value="' + esc(r.q) + '" oninput="App.setReportFilter(\'q\', this.value)" placeholder="Ara..."></div>' +
+            '<input id="repSearch" value="' + esc(r.q) + '" oninput="App.setReportFilter(\'q\', this.value)" placeholder="Ara..."></div>' +
           '<div style="flex:1"><label>Durum</label><select onchange="App.setReportFilter(\'durum\', this.value)">' + durumOpts + '</select></div>' +
         '</div>' +
         '<div class="row" style="margin-top:6px;align-items:flex-end">' +
@@ -663,6 +702,11 @@ var App = (function () {
     }
     html += '</div>';
     setView(html);
+    if (state._refocusReport) {
+      state._refocusReport = false;
+      var inp = $('#repSearch');
+      if (inp) { inp.focus(); var v = inp.value; inp.value = ''; inp.value = v; } // caret sona
+    }
   }
 
   /* =======================================================================
@@ -703,8 +747,8 @@ var App = (function () {
    * MÜŞTERİLER
    * ===================================================================== */
   function loadCustomers() {
-    setView('<div class="loading">Yükleniyor…</div>');
-    call('getCustomers', [state.customerQuery, state.customerPage, 20]).then(renderCustomers);
+    var key = 'cust:' + state.customerQuery + ':' + state.customerPage;
+    swr(key, 'getCustomers', [state.customerQuery, state.customerPage, 20], renderCustomers);
   }
   function renderCustomers(res) {
     var totalPages = Math.max(1, Math.ceil(res.total / res.pageSize));
@@ -731,14 +775,20 @@ var App = (function () {
     }
     html += '</div>';
     setView(html);
+    if (state._refocusCust) {
+      state._refocusCust = false;
+      var inp = $('#custFilter');
+      if (inp) { inp.focus(); var v = inp.value; inp.value = ''; inp.value = v; }
+    }
   }
   var custFilterTimer = null;
   function filterCustomers(v) {
+    state._refocusCust = true;
     clearTimeout(custFilterTimer);
     custFilterTimer = setTimeout(function () {
       state.customerQuery = v; state.customerPage = 1;
-      call('getCustomers', [state.customerQuery, 1, 20]).then(renderCustomers);
-    }, 300);
+      loadCustomers();
+    }, 250);
   }
   function custPage(p) { state.customerPage = p; loadCustomers(); }
 
@@ -763,6 +813,7 @@ var App = (function () {
           };
           if (!data.AdSoyad) { toast('Ad Soyad zorunlu', 'err'); return; }
           call('saveCustomer', [data]).then(function (id) {
+            cacheClear('cust:'); cacheClear('custdet:' + id); cacheClear('boot');
             closeModal(); toast('Müşteri kaydedildi', 'ok');
             openCustomer(id);
           }).catch(failHandler);
@@ -773,8 +824,7 @@ var App = (function () {
 
   function openCustomer(id) {
     activateTab('customers');
-    setView('<div class="loading">Yükleniyor…</div>');
-    call('getCustomerWithVehicles', [id]).then(renderCustomer).catch(failHandler);
+    swr('custdet:' + id, 'getCustomerWithVehicles', [id], renderCustomer);
   }
   function renderCustomer(d) {
     var m = d.musteri;
@@ -806,6 +856,7 @@ var App = (function () {
   function delCustomer(id) {
     confirmModal('Müşteri silinsin mi? (Geçmiş kayıtlar korunur, müşteri pasifleştirilir.)', function () {
       call('deleteCustomer', [id]).then(function () {
+        cacheClear('cust:'); cacheClear('custdet:' + id); cacheClear('boot');
         toast('Müşteri silindi', 'ok'); tab('customers');
       }).catch(failHandler);
     });
@@ -841,6 +892,7 @@ var App = (function () {
           };
           if (!data.Plaka) { toast('Plaka zorunlu', 'err'); return; }
           call('saveVehicle', [data]).then(function (id) {
+            cacheClear('veh:' + id); cacheClear('custdet:'); cacheClear('rep:'); cacheClear('boot');
             closeModal(); toast('Araç kaydedildi', 'ok'); openVehicle(id);
           }).catch(failHandler);
         } }
@@ -851,8 +903,7 @@ var App = (function () {
   function openVehicle(aracId) {
     hideSearch();
     $('#globalSearch').value = '';
-    setView('<div class="loading">Yükleniyor…</div>');
-    call('getVehicleHistory', [aracId]).then(renderVehicle).catch(failHandler);
+    swr('veh:' + aracId, 'getVehicleHistory', [aracId], renderVehicle);
   }
   function renderVehicle(d) {
     var a = d.arac, m = d.musteri;
@@ -894,12 +945,22 @@ var App = (function () {
    * ===================================================================== */
   function newService(aracId) {
     call('createService', [aracId]).then(function (servisId) {
+      cacheClear('veh:' + aracId); cacheClear('rep:'); cacheClear('boot');
       toast('Yeni iş emri açıldı', 'ok'); openService(servisId);
     }).catch(failHandler);
   }
+  // İş emri ekranında girdi alanları olduğundan otomatik arka plan yenilemesi yapmıyoruz:
+  // önbellek tazeyse anında gösterilir, kendi değişikliklerimiz önbelleği günceller.
   function openService(servisId) {
-    setView('<div class="loading">Yükleniyor…</div>');
-    call('getServiceDetail', [servisId]).then(renderService).catch(failHandler);
+    var key = 'svc:' + servisId;
+    state.currentView = key;
+    var c = dataCache[key];
+    if (c) { renderService(c.v); if ((Date.now() - c.t) < SWR_TTL) return; }
+    else setView('<div class="loading">Yükleniyor…</div>');
+    call('getServiceDetail', [servisId]).then(function (res) {
+      cachePut(key, res);
+      if (state.currentView === key) renderService(res);
+    }).catch(function (e) { if (!c) failHandler(e); });
   }
   function renderService(d) {
     var s = d.servis, a = d.arac, m = d.musteri;
@@ -984,32 +1045,47 @@ var App = (function () {
     setView(html);
   }
 
+  // Bir iş emri değiştiğinde: önbelleği tazele (svc) + etkilenen ekranları geçersiz kıl.
+  function onSvcChanged(res) {
+    cachePut('svc:' + res.servis.ServisID, res);
+    cacheClear('veh:'); cacheClear('rep:'); cacheClear('boot');
+    if (state.currentView === 'svc:' + res.servis.ServisID) renderService(res);
+  }
   function changeStatus(id, durum) {
-    call('updateServiceStatus', [id, durum]).then(function () { toast('Durum güncellendi', 'ok'); }).catch(failHandler);
+    call('updateServiceStatus', [id, durum]).then(function () {
+      var c = dataCache['svc:' + id]; if (c) c.v.servis.Durum = durum; // önbellekteki durumu güncelle
+      cacheClear('veh:'); cacheClear('rep:'); cacheClear('boot');
+      toast('Durum güncellendi', 'ok');
+    }).catch(failHandler);
   }
   function saveNot(id, val) {
-    call('updateServiceMeta', [id, { GenelNot: val }]).catch(failHandler);
+    call('updateServiceMeta', [id, { GenelNot: val }]).then(function (res) {
+      cachePut('svc:' + id, res); // yeniden render etmeden önbelleği güncelle (yazılan not silinmesin)
+    }).catch(failHandler);
   }
   function saveKdv(id) {
     var oran = $('#kdvOran').value;
     var dahil = $('#kdvDahil').checked;
-    call('updateServiceMeta', [id, { KdvOrani: oran, KdvDahil: dahil }]).then(renderService).catch(failHandler);
+    call('updateServiceMeta', [id, { KdvOrani: oran, KdvDahil: dahil }]).then(onSvcChanged).catch(failHandler);
   }
   function addIscilik(id) {
     var ac = $('#iAciklama').value.trim(), tu = $('#iTutar').value;
     if (!ac) { toast('Açıklama girin', 'err'); return; }
-    call('addIscilik', [id, ac, tu]).then(renderService).catch(failHandler);
+    call('addIscilik', [id, ac, tu]).then(onSvcChanged).catch(failHandler);
   }
-  function delIscilik(id, kid) { call('deleteIscilik', [id, kid]).then(renderService).catch(failHandler); }
+  function delIscilik(id, kid) { call('deleteIscilik', [id, kid]).then(onSvcChanged).catch(failHandler); }
   function addParca(id) {
     var ad = $('#pAd').value.trim(), adet = $('#pAdet').value, fiyat = $('#pFiyat').value;
     if (!ad) { toast('Parça adı girin', 'err'); return; }
-    call('addParca', [id, ad, adet, fiyat]).then(renderService).catch(failHandler);
+    call('addParca', [id, ad, adet, fiyat]).then(onSvcChanged).catch(failHandler);
   }
-  function delParca(id, kid) { call('deleteParca', [id, kid]).then(renderService).catch(failHandler); }
+  function delParca(id, kid) { call('deleteParca', [id, kid]).then(onSvcChanged).catch(failHandler); }
   function delService(id, aracId) {
     confirmModal('Bu iş emri ve tüm kalemleri kalıcı olarak silinecek. Emin misiniz?', function () {
-      call('deleteService', [id]).then(function () { toast('İş emri silindi', 'ok'); openVehicle(aracId); }).catch(failHandler);
+      call('deleteService', [id]).then(function () {
+        cacheClear('svc:' + id); cacheClear('veh:'); cacheClear('rep:'); cacheClear('boot');
+        toast('İş emri silindi', 'ok'); openVehicle(aracId);
+      }).catch(failHandler);
     });
   }
 
@@ -1121,7 +1197,8 @@ var App = (function () {
           };
           call('saveSettings', [data]).then(function (res) {
             state.settings = res;
-            $('#brandName').textContent = res.firmaAdi || 'OtoKay-T';
+            cacheClear('boot');
+            $('#brandName').textContent = res.firmaAdi || 'Teminat Group';
             closeModal(); toast('Ayarlar kaydedildi', 'ok');
           }).catch(failHandler);
         } }
