@@ -55,36 +55,63 @@ function include(filename) {
  * ALTYAPI YARDIMCILARI
  * ========================================================================= */
 
+// Spreadsheet handle'ı tek seferde çöz, tekrar tekrar PropertiesService/openById çağırma.
+var _ss = null;
+
 /** Verinin yazılacağı spreadsheet'i döndürür (script property SHEET_ID veya aktif dosya). */
 function getSpreadsheet_() {
+  if (_ss) return _ss;
   var id = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
-  if (id) return SpreadsheetApp.openById(id);
+  if (id) { _ss = SpreadsheetApp.openById(id); return _ss; }
   var active = SpreadsheetApp.getActiveSpreadsheet();
-  if (active) return active;
+  if (active) { _ss = active; return _ss; }
   throw new Error('Spreadsheet bulunamadı. setupSpreadsheet() çalıştırın veya SHEET_ID ayarlayın.');
 }
 
+// Sayfa handle'larını da memoize et (getSheetByName tarama maliyetini azalt).
+var _sheets = {};
 function getSheet_(name) {
-  var ss = getSpreadsheet_();
-  var sh = ss.getSheetByName(name);
+  if (_sheets[name]) return _sheets[name];
+  var sh = getSpreadsheet_().getSheetByName(name);
   if (!sh) throw new Error('Sayfa bulunamadı: ' + name + ' — setupSpreadsheet() çalıştırın.');
+  _sheets[name] = sh;
   return sh;
 }
 
-/** Bir sayfayı tek seferde okuyup, başlıklara göre nesne dizisine çevirir. */
+/**
+ * Bir sayfayı başlıklara göre nesne dizisine çevirir.
+ * PERFORMANS: Önce CacheService önbelleğine bakar (cross-request), yoksa tek seferde
+ * getDataRange().getValues() ile okur ve önbelleğe yazar. Yazma işlemlerinde
+ * invalidateSheet_() ile ilgili önbellek temizlenir.
+ */
 function readObjects_(name) {
+  try {
+    var cached = cache_().get('sheet:' + name);
+    if (cached) return JSON.parse(cached);
+  } catch (e) { /* önbellek hatasında doğrudan oku */ }
+
   var values = getSheet_(name).getDataRange().getValues();
-  if (values.length < 2) return [];
-  var headers = values[0];
   var out = [];
-  for (var r = 1; r < values.length; r++) {
-    var row = values[r];
-    if (row.join('') === '') continue; // boş satırı atla
-    var obj = { _row: r + 1 };
-    for (var c = 0; c < headers.length; c++) obj[headers[c]] = row[c];
-    out.push(obj);
+  if (values.length >= 2) {
+    var headers = values[0];
+    for (var r = 1; r < values.length; r++) {
+      var row = values[r];
+      if (row.join('') === '') continue; // boş satırı atla
+      var obj = { _row: r + 1 };
+      for (var c = 0; c < headers.length; c++) obj[headers[c]] = row[c];
+      out.push(obj);
+    }
   }
+  try {
+    var s = JSON.stringify(out);
+    if (s.length < 95000) cache_().put('sheet:' + name, s, CACHE_TTL); // 100KB sınırına takılma
+  } catch (e) { /* önbelleğe yazılamadıysa sorun değil */ }
   return out;
+}
+
+/** Bir veya daha fazla sayfanın önbelleğini temizler (her yazma işleminden sonra çağrılır). */
+function invalidateSheet_(name) {
+  try { cache_().remove('sheet:' + name); } catch (e) {}
 }
 
 /** Nesneyi sayfa başlık sırasına göre satır dizisine çevirir. */
@@ -94,10 +121,10 @@ function objToRow_(name, obj) {
   });
 }
 
-/** Bir satırı sayfanın sonuna toplu ekler. */
+/** Bir satırı sayfanın sonuna toplu ekler ve önbelleği tazeler. */
 function appendRow_(name, obj) {
-  var sh = getSheet_(name);
-  sh.appendRow(objToRow_(name, obj));
+  getSheet_(name).appendRow(objToRow_(name, obj));
+  invalidateSheet_(name);
 }
 
 /** Benzersiz ID üretir. */
@@ -174,6 +201,7 @@ function setupSpreadsheet() {
     ]);
   }
   clearCache_();
+  Object.keys(SHEETS).forEach(function (key) { invalidateSheet_(SHEETS[key]); });
   return 'Kurulum tamam: ' + ss.getUrl();
 }
 
@@ -211,9 +239,10 @@ function setSettingValue_(key, value) {
   var sh = getSheet_(SHEETS.AYARLAR);
   var values = sh.getDataRange().getValues();
   for (var r = 1; r < values.length; r++) {
-    if (values[r][0] === key) { sh.getRange(r + 1, 2).setValue(value); return; }
+    if (values[r][0] === key) { sh.getRange(r + 1, 2).setValue(value); invalidateSheet_(SHEETS.AYARLAR); return; }
   }
   sh.appendRow([key, value]);
+  invalidateSheet_(SHEETS.AYARLAR);
 }
 
 function saveSettings(data) {
@@ -235,6 +264,7 @@ function saveSettings(data) {
         sh.appendRow([k, toSet[k]]);
       }
     });
+    invalidateSheet_(SHEETS.AYARLAR);
     clearCache_();
     return getSettings();
   });
@@ -394,6 +424,7 @@ function saveCustomer(data) {
       var hit = rows.filter(function (m) { return m['MusteriID'] === data.MusteriID; })[0];
       if (!hit) throw new Error('Müşteri bulunamadı.');
       sh.getRange(hit._row, 2, 1, 3).setValues([[data.AdSoyad, data.Telefon, data.Notlar || '']]);
+      invalidateSheet_(SHEETS.MUSTERILER);
     } else {
       data.MusteriID = newId_('M');
       appendRow_(SHEETS.MUSTERILER, {
@@ -417,6 +448,7 @@ function deleteCustomer(musteriId) {
     var hit = rows.filter(function (m) { return m['MusteriID'] === musteriId; })[0];
     if (!hit) throw new Error('Müşteri bulunamadı.');
     sh.getRange(hit._row, HEADERS.Musteriler.indexOf('Aktif') + 1).setValue(false); // soft delete
+    invalidateSheet_(SHEETS.MUSTERILER);
     clearCache_();
     return true;
   });
@@ -470,6 +502,7 @@ function saveVehicle(data) {
         data.MusteriID, data.Plaka, data.Tur, data.Marka || '',
         data.Model || '', data.Yil || '', data.Notlar || ''
       ]]);
+      invalidateSheet_(SHEETS.ARACLAR);
     } else {
       data.AracID = newId_('A');
       appendRow_(SHEETS.ARACLAR, {
@@ -496,6 +529,7 @@ function deleteVehicle(aracId) {
     var hit = rows.filter(function (a) { return a['AracID'] === aracId; })[0];
     if (!hit) throw new Error('Araç bulunamadı.');
     sh.getRange(hit._row, HEADERS.Araclar.indexOf('Aktif') + 1).setValue(false);
+    invalidateSheet_(SHEETS.ARACLAR);
     clearCache_();
     return true;
   });
@@ -618,6 +652,7 @@ function nextServisNo_() {
   } else {
     sh.getRange(rowNo, 2).setValue(next);
   }
+  invalidateSheet_(SHEETS.AYARLAR);
   var yil = new Date().getFullYear();
   return yil + '-' + ('0000' + next).slice(-4);
 }
@@ -669,6 +704,7 @@ function updateServiceStatus(servisId, durum) {
     })[0];
     if (!hit) throw new Error('Servis kaydı bulunamadı.');
     sh.getRange(hit._row, HEADERS.ServisKayitlari.indexOf('Durum') + 1).setValue(durum);
+    invalidateSheet_(SHEETS.SERVISLER);
     return true;
   });
 }
@@ -686,6 +722,7 @@ function updateServiceMeta(servisId, meta) {
     if (meta.Tarih !== undefined) sh.getRange(hit._row, H.indexOf('Tarih') + 1).setValue(meta.Tarih);
     if (meta.KdvOrani !== undefined) sh.getRange(hit._row, H.indexOf('KDV Orani') + 1).setValue(num_(meta.KdvOrani));
     if (meta.KdvDahil !== undefined) sh.getRange(hit._row, H.indexOf('KDV Dahil') + 1).setValue(!!meta.KdvDahil);
+    invalidateSheet_(SHEETS.SERVISLER);
     recalcService_(servisId);
     return getServiceDetail(servisId);
   });
@@ -746,6 +783,7 @@ function deleteKalem_(sheetName, kalemId) {
   })[0];
   if (!hit) throw new Error('Kalem bulunamadı.');
   sh.deleteRow(hit._row);
+  invalidateSheet_(sheetName);
 }
 
 /** İşçilik + parça toplamlarını ve KDV'yi yeniden hesaplayıp servise yazar. */
@@ -781,6 +819,7 @@ function recalcService_(servisId) {
     round2_(kdvTutar),
     round2_(genelToplam)
   ]]);
+  invalidateSheet_(SHEETS.SERVISLER);
 }
 
 /** Bir iş emrini ve tüm kalemlerini siler. */
@@ -794,12 +833,14 @@ function deleteService(servisId) {
       // Alttan üste sil ki satır numaraları kaymasın
       rows.sort(function (a, b) { return b._row - a._row; })
         .forEach(function (k) { sh.deleteRow(k._row); });
+      invalidateSheet_(sheetName);
     });
     var ssh = getSheet_(SHEETS.SERVISLER);
     var hit = readObjects_(SHEETS.SERVISLER).filter(function (s) {
       return s['ServisID'] === servisId;
     })[0];
     if (hit) ssh.deleteRow(hit._row);
+    invalidateSheet_(SHEETS.SERVISLER);
     return true;
   });
 }

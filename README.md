@@ -73,12 +73,20 @@ Ardından Apps Script'te `setupSpreadsheet` çalıştırıp Web App olarak dağ�
 
 ## Performans Notları
 
+- **Sayfa veri önbelleği:** Her sayfanın okunmuş hali **CacheService** ile önbelleğe
+  alınır; tekrar eden okumalar Sheets'e gitmeden anında döner. Bir sayfaya yazıldığında
+  yalnızca o sayfanın önbelleği temizlenir (`invalidateSheet_`), böylece veri hep güncel kalır.
+- **Handle memoization:** Spreadsheet ve sayfa referansları (`getSheetByName`,
+  `PropertiesService`) çağrı başına bir kez çözülür, tekrar tekrar değil.
 - Her sayfa **tek seferde** `getDataRange().getValues()` ile okunur; işleme JS'te yapılır.
 - Yazma `setValues()` / `appendRow()` ile toplu; gereksiz `flush()` yok.
-- Ayarlar ve açılış özeti **CacheService** ile 5 dk önbelleğe alınır.
+- Ayarlar ve açılış özeti de **CacheService** ile önbelleğe alınır.
 - Açılışta yalnızca özet yüklenir; servis detayları kullanıcı tıklayınca gelir (**lazy load**).
 - Müşteri listesinde **arama + sayfalama**; arama sonuçları 50 ile sınırlıdır.
 - Tüm yazma işlemleri **LockService** kilidi altında (ID çakışması / eşzamanlılık koruması).
+
+> Not: Performans değişikliklerinden sonra Apps Script'te **yeni bir dağıtım (deployment)**
+> yayınlamayı unutmayın; mevcut sürüm eski kodu çalıştırmaya devam eder.
 
 ## Dosyalar
 
