@@ -1,9 +1,10 @@
-# OtoKay-T — Oto / Motosiklet Servis Yönetim Uygulaması
+# Teminat Group — Oto / Motosiklet Servis Yönetim Uygulaması
 
 Google Apps Script Web App (HTML Service) tabanlı, **Google Sheets'i veritabanı**
 olarak kullanan servis yönetim uygulaması. Müşteri/araç kaydı, iş emri açma,
-kalem kalem işçilik + parça girişi, otomatik KDV/toplam hesabı, araç geçmişi ve
-müşteriye gösterilebilen yazdırılabilir / WhatsApp'a gönderilebilir özet.
+kalem kalem işçilik + parça girişi, otomatik KDV/toplam hesabı, araç geçmişi,
+tüm iş emirlerini gösteren raporlar ekranı ve müşteriye gösterilebilen
+yazdırılabilir / WhatsApp'a gönderilebilir özet.
 
 ## Özellikler
 
@@ -11,11 +12,14 @@ müşteriye gösterilebilen yazdırılabilir / WhatsApp'a gönderilebilir özet.
 - **Araç** ekle (müşteriye bağlı, otomobil/motosiklet), plaka otomatik büyük harf.
 - **Arama:** plaka, müşteri adı veya telefona göre — üstteki tek kutudan.
 - **İş emri (servis kaydı):** durum takibi (Beklemede / Devam Ediyor / Tamamlandı / Teslim Edildi).
-- **İşçilik + Parça** kalemleri ekle/sil; toplam ve KDV otomatik hesaplanır.
+- **İşçilik + Parça** kalemleri ekle/sil (Enter ile hızlı ekleme); toplam ve KDV otomatik hesaplanır.
 - **KDV:** her iş emrinde oran ayarlanabilir + "fiyatlara KDV dahil mi?" seçilebilir.
   Varsayılan oran Ayarlar'dan değiştirilir (varsayılan %20).
 - **Araç geçmişi:** o araca açılmış tüm iş emirleri, tarih + tutar; tıkla → tüm kalemleri gör.
   Ayrıca "ömür boyu toplam" satırı.
+- **📊 Raporlar:** tüm iş emirleri tek ekranda — plaka/müşteri/iş emri no araması,
+  durum ve tarih aralığı filtresi, "Bu Ay" kısayolu; toplam ciro ve KDV özeti.
+- **🌙/☀️ Tema:** koyu ve açık renk modu (tercih kaydedilir).
 - **Müşteri özeti:** temiz ekran → **🖨️ Yazdır** ve **🟢 WhatsApp** (wa.me linki, müşteri numarasıyla).
 
 ## Veritabanı Yapısı (Sheets)

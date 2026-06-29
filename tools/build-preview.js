@@ -42,7 +42,7 @@ const mock = `
 
   // ---- Başlangıç (örnek) verisi ----
   var DB = {
-    settings: { kdvOrani: 20, firmaAdi: 'OtoKay-T Servis', firmaTelefon: '0212 555 12 34', firmaAdres: 'Sanayi Mah. 5. Sok. No:12, İstanbul' },
+    settings: { kdvOrani: 20, firmaAdi: 'Teminat Group', firmaTelefon: '0212 555 12 34', firmaAdres: 'Sanayi Mah. 5. Sok. No:12, İstanbul', tema: 'dark' },
     sonServisNo: 2,
     musteriler: [
       { MusteriID:'M_ahmet', AdSoyad:'Ahmet Yılmaz', Telefon:'0532 111 22 33', Notlar:'Düzenli müşteri', KayitTarihi:'2026-01-10 09:00', Aktif:true },
@@ -55,17 +55,21 @@ const mock = `
     ],
     servisler: [
       { ServisID:'S_1', AracID:'A_34abc', ServisNo:'2026-0001', Tarih:'2026-05-15 10:30', Durum:'Teslim Edildi', GenelNot:'Periyodik bakım', KdvOrani:20, KdvDahil:false },
-      { ServisID:'S_2', AracID:'A_34abc', ServisNo:'2026-0002', Tarih:'2026-06-20 16:00', Durum:'Devam Ediyor', GenelNot:'', KdvOrani:20, KdvDahil:false }
+      { ServisID:'S_2', AracID:'A_34abc', ServisNo:'2026-0002', Tarih:'2026-06-20 16:00', Durum:'Devam Ediyor', GenelNot:'', KdvOrani:20, KdvDahil:false },
+      { ServisID:'S_3', AracID:'A_06moto', ServisNo:'2026-0003', Tarih:'2026-06-25 11:15', Durum:'Tamamlandi', GenelNot:'Zincir ve yağ', KdvOrani:20, KdvDahil:false },
+      { ServisID:'S_4', AracID:'A_34xyz', ServisNo:'2026-0004', Tarih:'2026-06-28 09:00', Durum:'Beklemede', GenelNot:'', KdvOrani:20, KdvDahil:false }
     ],
     iscilikler: [
       { KalemID:'I_1', ServisID:'S_1', Aciklama:'Yağ ve filtre değişim işçiliği', Tutar:500 },
       { KalemID:'I_2', ServisID:'S_1', Aciklama:'Genel kontrol', Tutar:250 },
-      { KalemID:'I_3', ServisID:'S_2', Aciklama:'Balata değişimi', Tutar:400 }
+      { KalemID:'I_3', ServisID:'S_2', Aciklama:'Balata değişimi', Tutar:400 },
+      { KalemID:'I_4', ServisID:'S_3', Aciklama:'Zincir ayarı ve yağlama', Tutar:300 }
     ],
     parcalar: [
       { KalemID:'P_1', ServisID:'S_1', ParcaAdi:'Motor yağı 5W30', Adet:4, BirimFiyat:180, Tutar:720 },
       { KalemID:'P_2', ServisID:'S_1', ParcaAdi:'Yağ filtresi', Adet:1, BirimFiyat:150, Tutar:150 },
-      { KalemID:'P_3', ServisID:'S_2', ParcaAdi:'Ön fren balatası', Adet:1, BirimFiyat:850, Tutar:850 }
+      { KalemID:'P_3', ServisID:'S_2', ParcaAdi:'Ön fren balatası', Adet:1, BirimFiyat:850, Tutar:850 },
+      { KalemID:'P_4', ServisID:'S_3', ParcaAdi:'Motosiklet zinciri', Adet:1, BirimFiyat:600, Tutar:600 }
     ]
   };
 
@@ -181,7 +185,32 @@ const mock = `
     deleteParca: function(id,kid){ DB.parcalar=DB.parcalar.filter(function(p){return p.KalemID!==kid;}); recalc(id); return Backend.getServiceDetail(id); },
     deleteService: function(id){ DB.servisler=DB.servisler.filter(function(s){return s.ServisID!==id;}); DB.iscilikler=DB.iscilikler.filter(function(i){return i.ServisID!==id;}); DB.parcalar=DB.parcalar.filter(function(p){return p.ServisID!==id;}); return true; },
     getSummary: function(servisId){ var d=Backend.getServiceDetail(servisId); return {firma:DB.settings, servis:d.servis, arac:d.arac, musteri:d.musteri, iscilikler:d.iscilikler, parcalar:d.parcalar}; },
-    saveSettings: function(d){ DB.settings={kdvOrani:num(d.kdvOrani), firmaAdi:d.firmaAdi||'', firmaTelefon:d.firmaTelefon||'', firmaAdres:d.firmaAdres||''}; return DB.settings; }
+    saveSettings: function(d){ DB.settings={kdvOrani:num(d.kdvOrani), firmaAdi:d.firmaAdi||'', firmaTelefon:d.firmaTelefon||'', firmaAdres:d.firmaAdres||'', tema:DB.settings.tema||'dark'}; return DB.settings; },
+    setTheme: function(t){ DB.settings.tema = (t==='light'?'light':'dark'); return DB.settings.tema; },
+    getAllServices: function(f){
+      f=f||{}; var page=f.page||1, pageSize=f.pageSize||25;
+      var q=(''+(f.q||'')).toLowerCase().trim(), qp=q.replace(/\\s+/g,'');
+      var rows = DB.servisler.map(function(s){
+        var a=byId(DB.araclar,'AracID',s.AracID)||{}; var m=byId(DB.musteriler,'MusteriID',a.MusteriID)||{};
+        return { ServisID:s.ServisID, AracID:s.AracID, ServisNo:s.ServisNo, Tarih:''+s.Tarih, Durum:s.Durum,
+          Plaka:a.Plaka||'', Tur:a.Tur||'', Marka:a.Marka||'', Model:a.Model||'',
+          MusteriAdi:m.AdSoyad||'', Telefon:m.Telefon||'', GenelToplam:num(s.GenelToplam), KdvTutar:num(s.KdvTutar) };
+      });
+      if(f.durum) rows=rows.filter(function(r){return r.Durum===f.durum;});
+      if(f.acik) rows=rows.filter(function(r){return r.Durum!=='Teslim Edildi';});
+      if(f.baslangic) rows=rows.filter(function(r){return r.Tarih.substring(0,10)>=f.baslangic;});
+      if(f.bitis) rows=rows.filter(function(r){return r.Tarih.substring(0,10)<=f.bitis;});
+      if(q) rows=rows.filter(function(r){
+        return r.Plaka.toLowerCase().replace(/\\s+/g,'').indexOf(qp)>-1 || r.MusteriAdi.toLowerCase().indexOf(q)>-1 ||
+          (''+r.ServisNo).toLowerCase().indexOf(q)>-1 || (''+r.Telefon).toLowerCase().indexOf(q)>-1;
+      });
+      rows.sort(function(a,b){return (''+b.Tarih).localeCompare(''+a.Tarih);});
+      var ozet={ adet:rows.length, toplamCiro:0, toplamKdv:0, durumSayilari:{'Beklemede':0,'Devam Ediyor':0,'Tamamlandi':0,'Teslim Edildi':0} };
+      rows.forEach(function(r){ ozet.toplamCiro+=r.GenelToplam; ozet.toplamKdv+=r.KdvTutar; if(ozet.durumSayilari[r.Durum]!==undefined) ozet.durumSayilari[r.Durum]++; });
+      ozet.toplamCiro=r2(ozet.toplamCiro); ozet.toplamKdv=r2(ozet.toplamKdv);
+      var total=rows.length, start=(page-1)*pageSize;
+      return { items:rows.slice(start,start+pageSize), total:total, page:page, pageSize:pageSize, ozet:ozet };
+    }
   };
 
   // google.script.run taklidi (her erişimde taze handler seti)
@@ -208,7 +237,7 @@ const html =
 <base target="_top">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OtoKay-T — Önizleme</title>
+<title>Teminat Group Servis — Önizleme</title>
 ${styles}
 </head>
 <body>

@@ -4,7 +4,7 @@
 <base target="_top">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OtoKay-T — Önizleme</title>
+<title>Teminat Group Servis — Önizleme</title>
 <style>
   :root {
     --bg: #0f172a;
@@ -21,12 +21,25 @@
     --radius: 12px;
     --shadow: 0 6px 24px rgba(0,0,0,.35);
   }
+  /* AÇIK TEMA */
+  :root[data-theme="light"] {
+    --bg: #eef2f7;
+    --surface: #ffffff;
+    --surface-2: #f1f5f9;
+    --border: #d8e0ea;
+    --text: #0f172a;
+    --muted: #64748b;
+    --primary: #2563eb;
+    --primary-h: #1d4ed8;
+    --shadow: 0 6px 20px rgba(15,23,42,.10);
+  }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
     background: var(--bg); color: var(--text); font-size: 15px; line-height: 1.45;
     padding-bottom: 40px;
+    transition: background .2s, color .2s;
   }
   .hidden { display: none !important; }
 
@@ -214,8 +227,8 @@
   <!-- ÜST BAR -->
   <header class="topbar">
     <div class="brand" onclick="App.goHome()">
-      <span class="logo">🔧</span>
-      <span class="brand-name" id="brandName">OtoKay-T</span>
+      <span class="logo">🛡️</span>
+      <span class="brand-name" id="brandName">Teminat Group</span>
     </div>
     <div class="search-wrap">
       <input id="globalSearch" type="search" autocomplete="off"
@@ -223,12 +236,14 @@
              oninput="App.onSearchInput()" onkeydown="App.onSearchKey(event)">
       <div id="searchResults" class="search-results hidden"></div>
     </div>
+    <button class="icon-btn" id="themeBtn" title="Tema değiştir" onclick="App.toggleTheme()">🌙</button>
     <button class="icon-btn" title="Ayarlar" onclick="App.openSettings()">⚙️</button>
   </header>
 
   <!-- SEKME ÇUBUĞU -->
   <nav class="tabs">
     <button class="tab active" data-tab="home" onclick="App.tab('home')">🏠 Ana Sayfa</button>
+    <button class="tab" data-tab="reports" onclick="App.tab('reports')">📊 Raporlar</button>
     <button class="tab" data-tab="customers" onclick="App.tab('customers')">👤 Müşteriler</button>
   </nav>
 
@@ -256,7 +271,7 @@
 
   // ---- Başlangıç (örnek) verisi ----
   var DB = {
-    settings: { kdvOrani: 20, firmaAdi: 'OtoKay-T Servis', firmaTelefon: '0212 555 12 34', firmaAdres: 'Sanayi Mah. 5. Sok. No:12, İstanbul' },
+    settings: { kdvOrani: 20, firmaAdi: 'Teminat Group', firmaTelefon: '0212 555 12 34', firmaAdres: 'Sanayi Mah. 5. Sok. No:12, İstanbul', tema: 'dark' },
     sonServisNo: 2,
     musteriler: [
       { MusteriID:'M_ahmet', AdSoyad:'Ahmet Yılmaz', Telefon:'0532 111 22 33', Notlar:'Düzenli müşteri', KayitTarihi:'2026-01-10 09:00', Aktif:true },
@@ -269,17 +284,21 @@
     ],
     servisler: [
       { ServisID:'S_1', AracID:'A_34abc', ServisNo:'2026-0001', Tarih:'2026-05-15 10:30', Durum:'Teslim Edildi', GenelNot:'Periyodik bakım', KdvOrani:20, KdvDahil:false },
-      { ServisID:'S_2', AracID:'A_34abc', ServisNo:'2026-0002', Tarih:'2026-06-20 16:00', Durum:'Devam Ediyor', GenelNot:'', KdvOrani:20, KdvDahil:false }
+      { ServisID:'S_2', AracID:'A_34abc', ServisNo:'2026-0002', Tarih:'2026-06-20 16:00', Durum:'Devam Ediyor', GenelNot:'', KdvOrani:20, KdvDahil:false },
+      { ServisID:'S_3', AracID:'A_06moto', ServisNo:'2026-0003', Tarih:'2026-06-25 11:15', Durum:'Tamamlandi', GenelNot:'Zincir ve yağ', KdvOrani:20, KdvDahil:false },
+      { ServisID:'S_4', AracID:'A_34xyz', ServisNo:'2026-0004', Tarih:'2026-06-28 09:00', Durum:'Beklemede', GenelNot:'', KdvOrani:20, KdvDahil:false }
     ],
     iscilikler: [
       { KalemID:'I_1', ServisID:'S_1', Aciklama:'Yağ ve filtre değişim işçiliği', Tutar:500 },
       { KalemID:'I_2', ServisID:'S_1', Aciklama:'Genel kontrol', Tutar:250 },
-      { KalemID:'I_3', ServisID:'S_2', Aciklama:'Balata değişimi', Tutar:400 }
+      { KalemID:'I_3', ServisID:'S_2', Aciklama:'Balata değişimi', Tutar:400 },
+      { KalemID:'I_4', ServisID:'S_3', Aciklama:'Zincir ayarı ve yağlama', Tutar:300 }
     ],
     parcalar: [
       { KalemID:'P_1', ServisID:'S_1', ParcaAdi:'Motor yağı 5W30', Adet:4, BirimFiyat:180, Tutar:720 },
       { KalemID:'P_2', ServisID:'S_1', ParcaAdi:'Yağ filtresi', Adet:1, BirimFiyat:150, Tutar:150 },
-      { KalemID:'P_3', ServisID:'S_2', ParcaAdi:'Ön fren balatası', Adet:1, BirimFiyat:850, Tutar:850 }
+      { KalemID:'P_3', ServisID:'S_2', ParcaAdi:'Ön fren balatası', Adet:1, BirimFiyat:850, Tutar:850 },
+      { KalemID:'P_4', ServisID:'S_3', ParcaAdi:'Motosiklet zinciri', Adet:1, BirimFiyat:600, Tutar:600 }
     ]
   };
 
@@ -395,7 +414,32 @@
     deleteParca: function(id,kid){ DB.parcalar=DB.parcalar.filter(function(p){return p.KalemID!==kid;}); recalc(id); return Backend.getServiceDetail(id); },
     deleteService: function(id){ DB.servisler=DB.servisler.filter(function(s){return s.ServisID!==id;}); DB.iscilikler=DB.iscilikler.filter(function(i){return i.ServisID!==id;}); DB.parcalar=DB.parcalar.filter(function(p){return p.ServisID!==id;}); return true; },
     getSummary: function(servisId){ var d=Backend.getServiceDetail(servisId); return {firma:DB.settings, servis:d.servis, arac:d.arac, musteri:d.musteri, iscilikler:d.iscilikler, parcalar:d.parcalar}; },
-    saveSettings: function(d){ DB.settings={kdvOrani:num(d.kdvOrani), firmaAdi:d.firmaAdi||'', firmaTelefon:d.firmaTelefon||'', firmaAdres:d.firmaAdres||''}; return DB.settings; }
+    saveSettings: function(d){ DB.settings={kdvOrani:num(d.kdvOrani), firmaAdi:d.firmaAdi||'', firmaTelefon:d.firmaTelefon||'', firmaAdres:d.firmaAdres||'', tema:DB.settings.tema||'dark'}; return DB.settings; },
+    setTheme: function(t){ DB.settings.tema = (t==='light'?'light':'dark'); return DB.settings.tema; },
+    getAllServices: function(f){
+      f=f||{}; var page=f.page||1, pageSize=f.pageSize||25;
+      var q=(''+(f.q||'')).toLowerCase().trim(), qp=q.replace(/\s+/g,'');
+      var rows = DB.servisler.map(function(s){
+        var a=byId(DB.araclar,'AracID',s.AracID)||{}; var m=byId(DB.musteriler,'MusteriID',a.MusteriID)||{};
+        return { ServisID:s.ServisID, AracID:s.AracID, ServisNo:s.ServisNo, Tarih:''+s.Tarih, Durum:s.Durum,
+          Plaka:a.Plaka||'', Tur:a.Tur||'', Marka:a.Marka||'', Model:a.Model||'',
+          MusteriAdi:m.AdSoyad||'', Telefon:m.Telefon||'', GenelToplam:num(s.GenelToplam), KdvTutar:num(s.KdvTutar) };
+      });
+      if(f.durum) rows=rows.filter(function(r){return r.Durum===f.durum;});
+      if(f.acik) rows=rows.filter(function(r){return r.Durum!=='Teslim Edildi';});
+      if(f.baslangic) rows=rows.filter(function(r){return r.Tarih.substring(0,10)>=f.baslangic;});
+      if(f.bitis) rows=rows.filter(function(r){return r.Tarih.substring(0,10)<=f.bitis;});
+      if(q) rows=rows.filter(function(r){
+        return r.Plaka.toLowerCase().replace(/\s+/g,'').indexOf(qp)>-1 || r.MusteriAdi.toLowerCase().indexOf(q)>-1 ||
+          (''+r.ServisNo).toLowerCase().indexOf(q)>-1 || (''+r.Telefon).toLowerCase().indexOf(q)>-1;
+      });
+      rows.sort(function(a,b){return (''+b.Tarih).localeCompare(''+a.Tarih);});
+      var ozet={ adet:rows.length, toplamCiro:0, toplamKdv:0, durumSayilari:{'Beklemede':0,'Devam Ediyor':0,'Tamamlandi':0,'Teslim Edildi':0} };
+      rows.forEach(function(r){ ozet.toplamCiro+=r.GenelToplam; ozet.toplamKdv+=r.KdvTutar; if(ozet.durumSayilari[r.Durum]!==undefined) ozet.durumSayilari[r.Durum]++; });
+      ozet.toplamCiro=r2(ozet.toplamCiro); ozet.toplamKdv=r2(ozet.toplamKdv);
+      var total=rows.length, start=(page-1)*pageSize;
+      return { items:rows.slice(start,start+pageSize), total:total, page:page, pageSize:pageSize, ozet:ozet };
+    }
   };
 
   // google.script.run taklidi (her erişimde taze handler seti)
@@ -420,11 +464,12 @@
  * ========================================================================= */
 var App = (function () {
   var state = {
-    settings: { kdvOrani: 20, firmaAdi: 'OtoKay-T Servis', firmaTelefon: '', firmaAdres: '' },
+    settings: { kdvOrani: 20, firmaAdi: 'Teminat Group', firmaTelefon: '', firmaAdres: '', tema: 'dark' },
     durumlar: ['Beklemede', 'Devam Ediyor', 'Tamamlandi', 'Teslim Edildi'],
     customerPage: 1,
     customerQuery: '',
-    searchTimer: null
+    searchTimer: null,
+    report: { q: '', durum: '', baslangic: '', bitis: '', page: 1 }
   };
 
   /* ---- google.script.run -> Promise sarmalayıcı ---- */
@@ -464,7 +509,8 @@ var App = (function () {
     call('getBootstrapData').then(function (data) {
       state.settings = data.settings;
       state.durumlar = data.durumlar;
-      $('#brandName').textContent = data.settings.firmaAdi || 'OtoKay-T';
+      $('#brandName').textContent = data.settings.firmaAdi || 'Teminat Group';
+      applyTheme(data.settings.tema || 'dark');
       renderHome(data.stats);
     }).catch(function (e) {
       setView('<div class="card"><h2>Kurulum gerekli</h2><p>' + esc(e.message || e) +
@@ -482,11 +528,25 @@ var App = (function () {
     activateTab(name);
     if (name === 'home') goHome();
     else if (name === 'customers') { state.customerPage = 1; state.customerQuery = ''; loadCustomers(); }
+    else if (name === 'reports') loadReports();
   }
   function activateTab(name) {
     document.querySelectorAll('.tab').forEach(function (t) {
       t.classList.toggle('active', t.dataset.tab === name);
     });
+  }
+
+  /* ---- Tema ---- */
+  function applyTheme(tema) {
+    document.documentElement.setAttribute('data-theme', tema === 'light' ? 'light' : 'dark');
+    var btn = $('#themeBtn');
+    if (btn) { btn.textContent = tema === 'light' ? '☀️' : '🌙'; btn.title = tema === 'light' ? 'Koyu temaya geç' : 'Açık temaya geç'; }
+    state.settings.tema = tema;
+  }
+  function toggleTheme() {
+    var next = state.settings.tema === 'light' ? 'dark' : 'light';
+    applyTheme(next);                       // anında uygula
+    call('setTheme', [next]).catch(function () {}); // arka planda kaydet
   }
 
   /* =======================================================================
@@ -495,24 +555,107 @@ var App = (function () {
   function renderHome(stats) {
     setView(
       '<div class="stats">' +
-        stat(stats.acikServis, 'Açık İş Emri') +
-        stat(stats.aracSayisi, 'Kayıtlı Araç') +
-        stat(stats.musteriSayisi, 'Müşteri') +
-        stat(stats.toplamServis, 'Toplam Servis') +
+        stat(stats.acikServis, 'Açık İş Emri', "App.tab('reports')") +
+        stat(stats.aracSayisi, 'Kayıtlı Araç', '') +
+        stat(stats.musteriSayisi, 'Müşteri', "App.tab('customers')") +
+        stat(stats.toplamServis, 'Toplam Servis', "App.tab('reports')") +
       '</div>' +
       '<div class="card" style="margin-top:14px">' +
         '<h3>Hızlı İşlem</h3>' +
         '<div class="btn-row">' +
           '<button class="btn" onclick="App.newCustomerModal()">+ Yeni Müşteri</button>' +
-          '<button class="btn secondary" onclick="App.tab(\'customers\')">Müşteri Listesi</button>' +
+          '<button class="btn secondary" onclick="App.tab(\'reports\')">📊 Raporlar</button>' +
+          '<button class="btn secondary" onclick="App.tab(\'customers\')">👤 Müşteri Listesi</button>' +
         '</div>' +
-        '<p class="muted" style="margin-top:14px">Üstteki arama kutusundan <b>plaka</b>, <b>müşteri adı</b> ' +
-        'veya <b>telefon</b> ile araç bulabilirsiniz.</p>' +
+        '<p class="muted" style="margin-top:14px">💡 Üstteki arama kutusundan <b>plaka</b>, <b>müşteri adı</b> ' +
+        'veya <b>telefon</b> ile araç bulabilirsiniz. Yeni iş emri açmak için önce aracı bulun.</p>' +
       '</div>'
     );
   }
-  function stat(num, lbl) {
-    return '<div class="stat"><div class="num">' + (num || 0) + '</div><div class="lbl">' + lbl + '</div></div>';
+  function stat(num, lbl, onclick) {
+    var c = onclick ? ' style="cursor:pointer" onclick="' + onclick + '"' : '';
+    return '<div class="stat"' + c + '><div class="num">' + (num || 0) + '</div><div class="lbl">' + lbl + '</div></div>';
+  }
+
+  /* =======================================================================
+   * RAPORLAR — Tüm iş emirleri
+   * ===================================================================== */
+  var reportTimer = null;
+  function loadReports() {
+    setView('<div class="loading">Yükleniyor…</div>');
+    var r = state.report;
+    call('getAllServices', [{ q: r.q, durum: r.durum, baslangic: r.baslangic, bitis: r.bitis, page: r.page, pageSize: 25 }])
+      .then(renderReports).catch(failHandler);
+  }
+  function setReportFilter(key, val) {
+    state.report[key] = val; state.report.page = 1;
+    clearTimeout(reportTimer);
+    reportTimer = setTimeout(loadReports, key === 'q' ? 300 : 0);
+  }
+  function reportThisMonth() {
+    var d = new Date();
+    var p = function (x) { return ('0' + x).slice(-2); };
+    state.report.baslangic = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-01';
+    state.report.bitis = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate());
+    state.report.page = 1; loadReports();
+  }
+  function reportClear() {
+    state.report = { q: '', durum: '', baslangic: '', bitis: '', page: 1 }; loadReports();
+  }
+  function reportPage(p) { state.report.page = p; loadReports(); }
+
+  function renderReports(res) {
+    var r = state.report, o = res.ozet;
+    var totalPages = Math.max(1, Math.ceil(res.total / res.pageSize));
+    var durumOpts = ['<option value="">Tüm Durumlar</option>'].concat(state.durumlar.map(function (d) {
+      return '<option value="' + d + '" ' + (r.durum === d ? 'selected' : '') + '>' + d + '</option>';
+    })).join('');
+
+    var html =
+      '<div class="stats">' +
+        stat(o.adet, 'İş Emri', '') +
+        '<div class="stat"><div class="num" style="font-size:22px">' + money(o.toplamCiro) + '</div><div class="lbl">Toplam Ciro</div></div>' +
+        '<div class="stat"><div class="num" style="font-size:22px">' + money(o.toplamKdv) + '</div><div class="lbl">Toplam KDV</div></div>' +
+        stat(o.durumSayilari['Beklemede'] + o.durumSayilari['Devam Ediyor'] + o.durumSayilari['Tamamlandi'], 'Açık (teslim bekleyen)', '') +
+      '</div>' +
+      '<div class="card" style="margin-top:14px">' +
+        '<div class="row">' +
+          '<div style="flex:2"><label>Ara (plaka / müşteri / iş emri no)</label>' +
+            '<input value="' + esc(r.q) + '" oninput="App.setReportFilter(\'q\', this.value)" placeholder="Ara..."></div>' +
+          '<div style="flex:1"><label>Durum</label><select onchange="App.setReportFilter(\'durum\', this.value)">' + durumOpts + '</select></div>' +
+        '</div>' +
+        '<div class="row" style="margin-top:6px;align-items:flex-end">' +
+          '<div><label>Başlangıç</label><input type="date" value="' + esc(r.baslangic) + '" onchange="App.setReportFilter(\'baslangic\', this.value)"></div>' +
+          '<div><label>Bitiş</label><input type="date" value="' + esc(r.bitis) + '" onchange="App.setReportFilter(\'bitis\', this.value)"></div>' +
+          '<button class="btn secondary sm" onclick="App.reportThisMonth()">Bu Ay</button>' +
+          '<button class="btn secondary sm" onclick="App.reportClear()">Temizle</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="card">';
+
+    if (!res.items.length) {
+      html += '<div class="empty">Kayıt bulunamadı.</div>';
+    } else {
+      html += '<table><thead><tr><th>No</th><th class="hide-sm">Tarih</th><th>Plaka</th>' +
+        '<th class="hide-sm">Müşteri</th><th>Durum</th><th class="right">Tutar</th></tr></thead><tbody>' +
+        res.items.map(function (s) {
+          return '<tr style="cursor:pointer" onclick="App.openService(\'' + s.ServisID + '\')">' +
+            '<td><b>' + esc(s.ServisNo) + '</b></td>' +
+            '<td class="hide-sm">' + esc(s.Tarih) + '</td>' +
+            '<td><span class="sr-plaka">' + esc(s.Plaka) + '</span></td>' +
+            '<td class="hide-sm">' + esc(s.MusteriAdi) + '</td>' +
+            '<td><span class="' + badgeClass(s.Durum) + '">' + esc(s.Durum) + '</span></td>' +
+            '<td class="right">' + money(s.GenelToplam) + '</td></tr>';
+        }).join('') +
+        '</tbody></table>' +
+        '<div class="pagination">' +
+          '<button class="btn secondary sm" ' + (res.page <= 1 ? 'disabled' : '') + ' onclick="App.reportPage(' + (res.page - 1) + ')">‹ Önceki</button>' +
+          '<span class="muted">' + res.page + ' / ' + totalPages + ' (' + res.total + ' kayıt)</span>' +
+          '<button class="btn secondary sm" ' + (res.page >= totalPages ? 'disabled' : '') + ' onclick="App.reportPage(' + (res.page + 1) + ')">Sonraki ›</button>' +
+        '</div>';
+    }
+    html += '</div>';
+    setView(html);
   }
 
   /* =======================================================================
@@ -781,8 +924,8 @@ var App = (function () {
         }).join('') : '<tr><td colspan="3" class="muted">Kalem yok.</td></tr>') +
         '</tbody></table>' +
         '<div class="row" style="margin-top:10px;align-items:flex-end">' +
-          '<div style="flex:3"><label>Açıklama</label><input id="iAciklama" placeholder="Örn: Yağ değişimi işçiliği"></div>' +
-          '<div style="flex:1"><label>Tutar</label><input id="iTutar" inputmode="decimal" placeholder="0"></div>' +
+          '<div style="flex:3"><label>Açıklama</label><input id="iAciklama" placeholder="Örn: Yağ değişimi işçiliği" onkeydown="if(event.key===\'Enter\')App.addIscilik(\'' + s.ServisID + '\')"></div>' +
+          '<div style="flex:1"><label>Tutar</label><input id="iTutar" inputmode="decimal" placeholder="0" onkeydown="if(event.key===\'Enter\')App.addIscilik(\'' + s.ServisID + '\')"></div>' +
           '<button class="btn sm" onclick="App.addIscilik(\'' + s.ServisID + '\')">Ekle</button>' +
         '</div>' +
       '</div>' +
@@ -800,9 +943,9 @@ var App = (function () {
         }).join('') : '<tr><td colspan="5" class="muted">Kalem yok.</td></tr>') +
         '</tbody></table>' +
         '<div class="row" style="margin-top:10px;align-items:flex-end">' +
-          '<div style="flex:3"><label>Parça Adı</label><input id="pAd" placeholder="Örn: Yağ filtresi"></div>' +
-          '<div style="flex:1"><label>Adet</label><input id="pAdet" inputmode="decimal" value="1"></div>' +
-          '<div style="flex:1"><label>Birim Fiyat</label><input id="pFiyat" inputmode="decimal" placeholder="0"></div>' +
+          '<div style="flex:3"><label>Parça Adı</label><input id="pAd" placeholder="Örn: Yağ filtresi" onkeydown="if(event.key===\'Enter\')App.addParca(\'' + s.ServisID + '\')"></div>' +
+          '<div style="flex:1"><label>Adet</label><input id="pAdet" inputmode="decimal" value="1" onkeydown="if(event.key===\'Enter\')App.addParca(\'' + s.ServisID + '\')"></div>' +
+          '<div style="flex:1"><label>Birim Fiyat</label><input id="pFiyat" inputmode="decimal" placeholder="0" onkeydown="if(event.key===\'Enter\')App.addParca(\'' + s.ServisID + '\')"></div>' +
           '<button class="btn sm" onclick="App.addParca(\'' + s.ServisID + '\')">Ekle</button>' +
         '</div>' +
       '</div>' +
@@ -1007,6 +1150,9 @@ var App = (function () {
   /* ---- Dışa açılan API ---- */
   return {
     init: init, goHome: goHome, tab: tab,
+    toggleTheme: toggleTheme,
+    loadReports: loadReports, setReportFilter: setReportFilter,
+    reportThisMonth: reportThisMonth, reportClear: reportClear, reportPage: reportPage,
     onSearchInput: onSearchInput, onSearchKey: onSearchKey,
     loadCustomers: loadCustomers, filterCustomers: filterCustomers, custPage: custPage,
     newCustomerModal: newCustomerModal, openCustomer: openCustomer, editCustomer: editCustomer, delCustomer: delCustomer,

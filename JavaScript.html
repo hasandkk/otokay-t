@@ -4,11 +4,12 @@
  * ========================================================================= */
 var App = (function () {
   var state = {
-    settings: { kdvOrani: 20, firmaAdi: 'OtoKay-T Servis', firmaTelefon: '', firmaAdres: '' },
+    settings: { kdvOrani: 20, firmaAdi: 'Teminat Group', firmaTelefon: '', firmaAdres: '', tema: 'dark' },
     durumlar: ['Beklemede', 'Devam Ediyor', 'Tamamlandi', 'Teslim Edildi'],
     customerPage: 1,
     customerQuery: '',
-    searchTimer: null
+    searchTimer: null,
+    report: { q: '', durum: '', baslangic: '', bitis: '', page: 1 }
   };
 
   /* ---- google.script.run -> Promise sarmalayıcı ---- */
@@ -48,7 +49,8 @@ var App = (function () {
     call('getBootstrapData').then(function (data) {
       state.settings = data.settings;
       state.durumlar = data.durumlar;
-      $('#brandName').textContent = data.settings.firmaAdi || 'OtoKay-T';
+      $('#brandName').textContent = data.settings.firmaAdi || 'Teminat Group';
+      applyTheme(data.settings.tema || 'dark');
       renderHome(data.stats);
     }).catch(function (e) {
       setView('<div class="card"><h2>Kurulum gerekli</h2><p>' + esc(e.message || e) +
@@ -66,11 +68,25 @@ var App = (function () {
     activateTab(name);
     if (name === 'home') goHome();
     else if (name === 'customers') { state.customerPage = 1; state.customerQuery = ''; loadCustomers(); }
+    else if (name === 'reports') loadReports();
   }
   function activateTab(name) {
     document.querySelectorAll('.tab').forEach(function (t) {
       t.classList.toggle('active', t.dataset.tab === name);
     });
+  }
+
+  /* ---- Tema ---- */
+  function applyTheme(tema) {
+    document.documentElement.setAttribute('data-theme', tema === 'light' ? 'light' : 'dark');
+    var btn = $('#themeBtn');
+    if (btn) { btn.textContent = tema === 'light' ? '☀️' : '🌙'; btn.title = tema === 'light' ? 'Koyu temaya geç' : 'Açık temaya geç'; }
+    state.settings.tema = tema;
+  }
+  function toggleTheme() {
+    var next = state.settings.tema === 'light' ? 'dark' : 'light';
+    applyTheme(next);                       // anında uygula
+    call('setTheme', [next]).catch(function () {}); // arka planda kaydet
   }
 
   /* =======================================================================
@@ -79,24 +95,107 @@ var App = (function () {
   function renderHome(stats) {
     setView(
       '<div class="stats">' +
-        stat(stats.acikServis, 'Açık İş Emri') +
-        stat(stats.aracSayisi, 'Kayıtlı Araç') +
-        stat(stats.musteriSayisi, 'Müşteri') +
-        stat(stats.toplamServis, 'Toplam Servis') +
+        stat(stats.acikServis, 'Açık İş Emri', "App.tab('reports')") +
+        stat(stats.aracSayisi, 'Kayıtlı Araç', '') +
+        stat(stats.musteriSayisi, 'Müşteri', "App.tab('customers')") +
+        stat(stats.toplamServis, 'Toplam Servis', "App.tab('reports')") +
       '</div>' +
       '<div class="card" style="margin-top:14px">' +
         '<h3>Hızlı İşlem</h3>' +
         '<div class="btn-row">' +
           '<button class="btn" onclick="App.newCustomerModal()">+ Yeni Müşteri</button>' +
-          '<button class="btn secondary" onclick="App.tab(\'customers\')">Müşteri Listesi</button>' +
+          '<button class="btn secondary" onclick="App.tab(\'reports\')">📊 Raporlar</button>' +
+          '<button class="btn secondary" onclick="App.tab(\'customers\')">👤 Müşteri Listesi</button>' +
         '</div>' +
-        '<p class="muted" style="margin-top:14px">Üstteki arama kutusundan <b>plaka</b>, <b>müşteri adı</b> ' +
-        'veya <b>telefon</b> ile araç bulabilirsiniz.</p>' +
+        '<p class="muted" style="margin-top:14px">💡 Üstteki arama kutusundan <b>plaka</b>, <b>müşteri adı</b> ' +
+        'veya <b>telefon</b> ile araç bulabilirsiniz. Yeni iş emri açmak için önce aracı bulun.</p>' +
       '</div>'
     );
   }
-  function stat(num, lbl) {
-    return '<div class="stat"><div class="num">' + (num || 0) + '</div><div class="lbl">' + lbl + '</div></div>';
+  function stat(num, lbl, onclick) {
+    var c = onclick ? ' style="cursor:pointer" onclick="' + onclick + '"' : '';
+    return '<div class="stat"' + c + '><div class="num">' + (num || 0) + '</div><div class="lbl">' + lbl + '</div></div>';
+  }
+
+  /* =======================================================================
+   * RAPORLAR — Tüm iş emirleri
+   * ===================================================================== */
+  var reportTimer = null;
+  function loadReports() {
+    setView('<div class="loading">Yükleniyor…</div>');
+    var r = state.report;
+    call('getAllServices', [{ q: r.q, durum: r.durum, baslangic: r.baslangic, bitis: r.bitis, page: r.page, pageSize: 25 }])
+      .then(renderReports).catch(failHandler);
+  }
+  function setReportFilter(key, val) {
+    state.report[key] = val; state.report.page = 1;
+    clearTimeout(reportTimer);
+    reportTimer = setTimeout(loadReports, key === 'q' ? 300 : 0);
+  }
+  function reportThisMonth() {
+    var d = new Date();
+    var p = function (x) { return ('0' + x).slice(-2); };
+    state.report.baslangic = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-01';
+    state.report.bitis = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate());
+    state.report.page = 1; loadReports();
+  }
+  function reportClear() {
+    state.report = { q: '', durum: '', baslangic: '', bitis: '', page: 1 }; loadReports();
+  }
+  function reportPage(p) { state.report.page = p; loadReports(); }
+
+  function renderReports(res) {
+    var r = state.report, o = res.ozet;
+    var totalPages = Math.max(1, Math.ceil(res.total / res.pageSize));
+    var durumOpts = ['<option value="">Tüm Durumlar</option>'].concat(state.durumlar.map(function (d) {
+      return '<option value="' + d + '" ' + (r.durum === d ? 'selected' : '') + '>' + d + '</option>';
+    })).join('');
+
+    var html =
+      '<div class="stats">' +
+        stat(o.adet, 'İş Emri', '') +
+        '<div class="stat"><div class="num" style="font-size:22px">' + money(o.toplamCiro) + '</div><div class="lbl">Toplam Ciro</div></div>' +
+        '<div class="stat"><div class="num" style="font-size:22px">' + money(o.toplamKdv) + '</div><div class="lbl">Toplam KDV</div></div>' +
+        stat(o.durumSayilari['Beklemede'] + o.durumSayilari['Devam Ediyor'] + o.durumSayilari['Tamamlandi'], 'Açık (teslim bekleyen)', '') +
+      '</div>' +
+      '<div class="card" style="margin-top:14px">' +
+        '<div class="row">' +
+          '<div style="flex:2"><label>Ara (plaka / müşteri / iş emri no)</label>' +
+            '<input value="' + esc(r.q) + '" oninput="App.setReportFilter(\'q\', this.value)" placeholder="Ara..."></div>' +
+          '<div style="flex:1"><label>Durum</label><select onchange="App.setReportFilter(\'durum\', this.value)">' + durumOpts + '</select></div>' +
+        '</div>' +
+        '<div class="row" style="margin-top:6px;align-items:flex-end">' +
+          '<div><label>Başlangıç</label><input type="date" value="' + esc(r.baslangic) + '" onchange="App.setReportFilter(\'baslangic\', this.value)"></div>' +
+          '<div><label>Bitiş</label><input type="date" value="' + esc(r.bitis) + '" onchange="App.setReportFilter(\'bitis\', this.value)"></div>' +
+          '<button class="btn secondary sm" onclick="App.reportThisMonth()">Bu Ay</button>' +
+          '<button class="btn secondary sm" onclick="App.reportClear()">Temizle</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="card">';
+
+    if (!res.items.length) {
+      html += '<div class="empty">Kayıt bulunamadı.</div>';
+    } else {
+      html += '<table><thead><tr><th>No</th><th class="hide-sm">Tarih</th><th>Plaka</th>' +
+        '<th class="hide-sm">Müşteri</th><th>Durum</th><th class="right">Tutar</th></tr></thead><tbody>' +
+        res.items.map(function (s) {
+          return '<tr style="cursor:pointer" onclick="App.openService(\'' + s.ServisID + '\')">' +
+            '<td><b>' + esc(s.ServisNo) + '</b></td>' +
+            '<td class="hide-sm">' + esc(s.Tarih) + '</td>' +
+            '<td><span class="sr-plaka">' + esc(s.Plaka) + '</span></td>' +
+            '<td class="hide-sm">' + esc(s.MusteriAdi) + '</td>' +
+            '<td><span class="' + badgeClass(s.Durum) + '">' + esc(s.Durum) + '</span></td>' +
+            '<td class="right">' + money(s.GenelToplam) + '</td></tr>';
+        }).join('') +
+        '</tbody></table>' +
+        '<div class="pagination">' +
+          '<button class="btn secondary sm" ' + (res.page <= 1 ? 'disabled' : '') + ' onclick="App.reportPage(' + (res.page - 1) + ')">‹ Önceki</button>' +
+          '<span class="muted">' + res.page + ' / ' + totalPages + ' (' + res.total + ' kayıt)</span>' +
+          '<button class="btn secondary sm" ' + (res.page >= totalPages ? 'disabled' : '') + ' onclick="App.reportPage(' + (res.page + 1) + ')">Sonraki ›</button>' +
+        '</div>';
+    }
+    html += '</div>';
+    setView(html);
   }
 
   /* =======================================================================
@@ -365,8 +464,8 @@ var App = (function () {
         }).join('') : '<tr><td colspan="3" class="muted">Kalem yok.</td></tr>') +
         '</tbody></table>' +
         '<div class="row" style="margin-top:10px;align-items:flex-end">' +
-          '<div style="flex:3"><label>Açıklama</label><input id="iAciklama" placeholder="Örn: Yağ değişimi işçiliği"></div>' +
-          '<div style="flex:1"><label>Tutar</label><input id="iTutar" inputmode="decimal" placeholder="0"></div>' +
+          '<div style="flex:3"><label>Açıklama</label><input id="iAciklama" placeholder="Örn: Yağ değişimi işçiliği" onkeydown="if(event.key===\'Enter\')App.addIscilik(\'' + s.ServisID + '\')"></div>' +
+          '<div style="flex:1"><label>Tutar</label><input id="iTutar" inputmode="decimal" placeholder="0" onkeydown="if(event.key===\'Enter\')App.addIscilik(\'' + s.ServisID + '\')"></div>' +
           '<button class="btn sm" onclick="App.addIscilik(\'' + s.ServisID + '\')">Ekle</button>' +
         '</div>' +
       '</div>' +
@@ -384,9 +483,9 @@ var App = (function () {
         }).join('') : '<tr><td colspan="5" class="muted">Kalem yok.</td></tr>') +
         '</tbody></table>' +
         '<div class="row" style="margin-top:10px;align-items:flex-end">' +
-          '<div style="flex:3"><label>Parça Adı</label><input id="pAd" placeholder="Örn: Yağ filtresi"></div>' +
-          '<div style="flex:1"><label>Adet</label><input id="pAdet" inputmode="decimal" value="1"></div>' +
-          '<div style="flex:1"><label>Birim Fiyat</label><input id="pFiyat" inputmode="decimal" placeholder="0"></div>' +
+          '<div style="flex:3"><label>Parça Adı</label><input id="pAd" placeholder="Örn: Yağ filtresi" onkeydown="if(event.key===\'Enter\')App.addParca(\'' + s.ServisID + '\')"></div>' +
+          '<div style="flex:1"><label>Adet</label><input id="pAdet" inputmode="decimal" value="1" onkeydown="if(event.key===\'Enter\')App.addParca(\'' + s.ServisID + '\')"></div>' +
+          '<div style="flex:1"><label>Birim Fiyat</label><input id="pFiyat" inputmode="decimal" placeholder="0" onkeydown="if(event.key===\'Enter\')App.addParca(\'' + s.ServisID + '\')"></div>' +
           '<button class="btn sm" onclick="App.addParca(\'' + s.ServisID + '\')">Ekle</button>' +
         '</div>' +
       '</div>' +
@@ -591,6 +690,9 @@ var App = (function () {
   /* ---- Dışa açılan API ---- */
   return {
     init: init, goHome: goHome, tab: tab,
+    toggleTheme: toggleTheme,
+    loadReports: loadReports, setReportFilter: setReportFilter,
+    reportThisMonth: reportThisMonth, reportClear: reportClear, reportPage: reportPage,
     onSearchInput: onSearchInput, onSearchKey: onSearchKey,
     loadCustomers: loadCustomers, filterCustomers: filterCustomers, custPage: custPage,
     newCustomerModal: newCustomerModal, openCustomer: openCustomer, editCustomer: editCustomer, delCustomer: delCustomer,

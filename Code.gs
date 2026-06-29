@@ -165,11 +165,12 @@ function setupSpreadsheet() {
   // Varsayılan ayarlar
   var ayarSh = ss.getSheetByName(SHEETS.AYARLAR);
   if (ayarSh.getLastRow() < 2) {
-    ayarSh.getRange(2, 1, 5, 2).setValues([
+    ayarSh.getRange(2, 1, 6, 2).setValues([
       ['kdvOrani', 20],
-      ['firmaAdi', 'OtoKay-T Servis'],
+      ['firmaAdi', 'Teminat Group'],
       ['firmaTelefon', ''],
       ['firmaAdres', ''],
+      ['tema', 'dark'],
       ['sonServisNo', 0]
     ]);
   }
@@ -188,12 +189,32 @@ function getSettings() {
   rows.forEach(function (r) { s[r['Anahtar']] = r['Deger']; });
   var out = {
     kdvOrani: num_(s.kdvOrani) || 20,
-    firmaAdi: s.firmaAdi || 'OtoKay-T Servis',
+    firmaAdi: s.firmaAdi || 'Teminat Group',
     firmaTelefon: s.firmaTelefon || '',
-    firmaAdres: s.firmaAdres || ''
+    firmaAdres: s.firmaAdres || '',
+    tema: s.tema || 'dark'
   };
   cache_().put('settings', JSON.stringify(out), CACHE_TTL);
   return out;
+}
+
+/** Sadece tema tercihini günceller (diğer ayarlara dokunmaz). */
+function setTheme(tema) {
+  return withLock_(function () {
+    setSettingValue_('tema', tema === 'light' ? 'light' : 'dark');
+    clearCache_();
+    return tema;
+  });
+}
+
+/** Ayarlar sayfasında tek bir anahtarı günceller / ekler. */
+function setSettingValue_(key, value) {
+  var sh = getSheet_(SHEETS.AYARLAR);
+  var values = sh.getDataRange().getValues();
+  for (var r = 1; r < values.length; r++) {
+    if (values[r][0] === key) { sh.getRange(r + 1, 2).setValue(value); return; }
+  }
+  sh.appendRow([key, value]);
 }
 
 function saveSettings(data) {
@@ -248,6 +269,89 @@ function getStats_() {
 
 function aktif_(o) {
   return o['Aktif'] === '' || o['Aktif'] === true || o['Aktif'] === 'TRUE' || o['Aktif'] === 1 || o['Aktif'] === undefined;
+}
+
+/* =========================================================================
+ * RAPORLAR — Tüm iş emirleri (filtre + özet)
+ * ========================================================================= */
+/**
+ * filters: { q, durum, baslangic ('yyyy-MM-dd'), bitis, acik (bool), page, pageSize }
+ * Tek seferde tüm sayfaları okur, JS'te birleştirir ve filtreler.
+ */
+function getAllServices(filters) {
+  filters = filters || {};
+  var page = filters.page || 1;
+  var pageSize = filters.pageSize || 25;
+  var q = ('' + (filters.q || '')).toLowerCase().trim();
+  var qPlaka = q.replace(/\s+/g, '');
+
+  var araclar = readObjects_(SHEETS.ARACLAR);
+  var aMap = {};
+  araclar.forEach(function (a) { aMap[a['AracID']] = a; });
+  var musteriler = readObjects_(SHEETS.MUSTERILER);
+  var mMap = {};
+  musteriler.forEach(function (m) { mMap[m['MusteriID']] = m; });
+
+  var rows = readObjects_(SHEETS.SERVISLER).map(function (s) {
+    var a = aMap[s['AracID']] || {};
+    var m = mMap[a['MusteriID']] || {};
+    return {
+      ServisID: s['ServisID'],
+      AracID: s['AracID'],
+      ServisNo: s['ServisNo'],
+      Tarih: '' + s['Tarih'],
+      Durum: s['Durum'],
+      Plaka: a['Plaka'] || '',
+      Tur: a['Tur'] || '',
+      Marka: a['Marka'] || '',
+      Model: a['Model'] || '',
+      MusteriAdi: m['Ad Soyad'] || '',
+      Telefon: m['Telefon'] || '',
+      GenelToplam: num_(s['Genel Toplam']),
+      KdvTutar: num_(s['KDV Tutar'])
+    };
+  });
+
+  // Filtreler
+  if (filters.durum) rows = rows.filter(function (r) { return r.Durum === filters.durum; });
+  if (filters.acik) rows = rows.filter(function (r) { return r.Durum !== 'Teslim Edildi'; });
+  if (filters.baslangic) rows = rows.filter(function (r) { return r.Tarih.substring(0, 10) >= filters.baslangic; });
+  if (filters.bitis) rows = rows.filter(function (r) { return r.Tarih.substring(0, 10) <= filters.bitis; });
+  if (q) {
+    rows = rows.filter(function (r) {
+      return r.Plaka.toLowerCase().replace(/\s+/g, '').indexOf(qPlaka) > -1 ||
+        r.MusteriAdi.toLowerCase().indexOf(q) > -1 ||
+        ('' + r.ServisNo).toLowerCase().indexOf(q) > -1 ||
+        ('' + r.Telefon).toLowerCase().indexOf(q) > -1;
+    });
+  }
+
+  rows.sort(function (a, b) { return ('' + b.Tarih).localeCompare('' + a.Tarih); });
+
+  // Özet (filtrelenmiş tüm set üzerinden)
+  var ozet = {
+    adet: rows.length,
+    toplamCiro: 0,
+    toplamKdv: 0,
+    durumSayilari: { 'Beklemede': 0, 'Devam Ediyor': 0, 'Tamamlandi': 0, 'Teslim Edildi': 0 }
+  };
+  rows.forEach(function (r) {
+    ozet.toplamCiro += r.GenelToplam;
+    ozet.toplamKdv += r.KdvTutar;
+    if (ozet.durumSayilari[r.Durum] !== undefined) ozet.durumSayilari[r.Durum]++;
+  });
+  ozet.toplamCiro = round2_(ozet.toplamCiro);
+  ozet.toplamKdv = round2_(ozet.toplamKdv);
+
+  var total = rows.length;
+  var start = (page - 1) * pageSize;
+  return {
+    items: rows.slice(start, start + pageSize),
+    total: total,
+    page: page,
+    pageSize: pageSize,
+    ozet: ozet
+  };
 }
 
 /* =========================================================================
