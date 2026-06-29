@@ -42,9 +42,8 @@ var CACHE_TTL = 300; // saniye (5 dk)
 function doGet() {
   return HtmlService.createTemplateFromFile('Index')
     .evaluate()
-    .setTitle('OtoKay-T Servis')
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
-    .setFaviconUrl('https://fonts.gstatic.com/s/i/materialicons/build/v6/24px.svg');
+    .setTitle('Teminat Group Servis')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
 /** Index.html içinden CSS / JS parçalarını dahil etmek için. */
