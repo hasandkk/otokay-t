@@ -1,0 +1,606 @@
+<script>
+/* =========================================================================
+ * OtoKay-T — İstemci tarafı uygulama mantığı
+ * ========================================================================= */
+var App = (function () {
+  var state = {
+    settings: { kdvOrani: 20, firmaAdi: 'OtoKay-T Servis', firmaTelefon: '', firmaAdres: '' },
+    durumlar: ['Beklemede', 'Devam Ediyor', 'Tamamlandi', 'Teslim Edildi'],
+    customerPage: 1,
+    customerQuery: '',
+    searchTimer: null
+  };
+
+  /* ---- google.script.run -> Promise sarmalayıcı ---- */
+  function call(fn, args) {
+    args = args || [];
+    return new Promise(function (resolve, reject) {
+      google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(function (e) { reject(e); })
+        [fn].apply(null, args);
+    });
+  }
+
+  /* ---- Yardımcılar ---- */
+  function $(sel, root) { return (root || document).querySelector(sel); }
+  function el(html) { var d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstChild; }
+  function esc(s) {
+    return ('' + (s === null || s === undefined ? '' : s))
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function money(n) {
+    return Number(n || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₺';
+  }
+  function badgeClass(d) { return 'badge ' + (d || '').replace(/\s+/g, ''); }
+  function setView(html) { $('#view').innerHTML = html; }
+  function toast(msg, type) {
+    var t = $('#toast');
+    t.textContent = msg; t.className = 'toast ' + (type || '');
+    setTimeout(function () { t.className = 'toast hidden'; }, 3000);
+  }
+  function busy(on) { /* basit görsel geri bildirim için yer tutucu */ }
+
+  /* =======================================================================
+   * BAŞLATMA
+   * ===================================================================== */
+  function init() {
+    call('getBootstrapData').then(function (data) {
+      state.settings = data.settings;
+      state.durumlar = data.durumlar;
+      $('#brandName').textContent = data.settings.firmaAdi || 'OtoKay-T';
+      renderHome(data.stats);
+    }).catch(function (e) {
+      setView('<div class="card"><h2>Kurulum gerekli</h2><p>' + esc(e.message || e) +
+        '</p><p class="muted">Apps Script editöründen <b>setupSpreadsheet</b> fonksiyonunu bir kez çalıştırın.</p></div>');
+    });
+  }
+
+  function goHome() {
+    activateTab('home');
+    setView('<div class="loading">Yükleniyor…</div>');
+    call('getBootstrapData').then(function (d) { renderHome(d.stats); });
+  }
+
+  function tab(name) {
+    activateTab(name);
+    if (name === 'home') goHome();
+    else if (name === 'customers') { state.customerPage = 1; state.customerQuery = ''; loadCustomers(); }
+  }
+  function activateTab(name) {
+    document.querySelectorAll('.tab').forEach(function (t) {
+      t.classList.toggle('active', t.dataset.tab === name);
+    });
+  }
+
+  /* =======================================================================
+   * ANA SAYFA
+   * ===================================================================== */
+  function renderHome(stats) {
+    setView(
+      '<div class="stats">' +
+        stat(stats.acikServis, 'Açık İş Emri') +
+        stat(stats.aracSayisi, 'Kayıtlı Araç') +
+        stat(stats.musteriSayisi, 'Müşteri') +
+        stat(stats.toplamServis, 'Toplam Servis') +
+      '</div>' +
+      '<div class="card" style="margin-top:14px">' +
+        '<h3>Hızlı İşlem</h3>' +
+        '<div class="btn-row">' +
+          '<button class="btn" onclick="App.newCustomerModal()">+ Yeni Müşteri</button>' +
+          '<button class="btn secondary" onclick="App.tab(\'customers\')">Müşteri Listesi</button>' +
+        '</div>' +
+        '<p class="muted" style="margin-top:14px">Üstteki arama kutusundan <b>plaka</b>, <b>müşteri adı</b> ' +
+        'veya <b>telefon</b> ile araç bulabilirsiniz.</p>' +
+      '</div>'
+    );
+  }
+  function stat(num, lbl) {
+    return '<div class="stat"><div class="num">' + (num || 0) + '</div><div class="lbl">' + lbl + '</div></div>';
+  }
+
+  /* =======================================================================
+   * GLOBAL ARAMA (plaka / müşteri / telefon)
+   * ===================================================================== */
+  function onSearchInput() {
+    clearTimeout(state.searchTimer);
+    var q = $('#globalSearch').value.trim();
+    if (q.length < 2) { hideSearch(); return; }
+    state.searchTimer = setTimeout(function () { runSearch(q); }, 250);
+  }
+  function onSearchKey(e) {
+    if (e.key === 'Escape') hideSearch();
+  }
+  function runSearch(q) {
+    call('search', [q]).then(function (res) {
+      var box = $('#searchResults');
+      if (!res.araclar.length) {
+        box.innerHTML = '<div class="sr-item muted">Sonuç yok</div>';
+      } else {
+        box.innerHTML = res.araclar.map(function (a) {
+          return '<div class="sr-item" onclick="App.openVehicle(\'' + a.AracID + '\')">' +
+            '<div><div class="sr-plaka">' + esc(a.Plaka) + ' <span class="badge tur">' + esc(a.Tur) + '</span></div>' +
+            '<div class="sr-meta">' + esc(a.Marka) + ' ' + esc(a.Model) + '</div></div>' +
+            '<div class="sr-meta right">' + esc(a.MusteriAdi) + '<br>' + esc(a.Telefon) + '</div>' +
+          '</div>';
+        }).join('');
+      }
+      box.classList.remove('hidden');
+    });
+  }
+  function hideSearch() { $('#searchResults').classList.add('hidden'); }
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest('.search-wrap')) hideSearch();
+  });
+
+  /* =======================================================================
+   * MÜŞTERİLER
+   * ===================================================================== */
+  function loadCustomers() {
+    setView('<div class="loading">Yükleniyor…</div>');
+    call('getCustomers', [state.customerQuery, state.customerPage, 20]).then(renderCustomers);
+  }
+  function renderCustomers(res) {
+    var totalPages = Math.max(1, Math.ceil(res.total / res.pageSize));
+    var html =
+      '<div class="card">' +
+        '<div class="section-head"><h2>Müşteriler (' + res.total + ')</h2>' +
+        '<button class="btn" onclick="App.newCustomerModal()">+ Yeni</button></div>' +
+        '<div class="field"><input id="custFilter" placeholder="Ad veya telefon ile filtrele..." ' +
+          'value="' + esc(state.customerQuery) + '" oninput="App.filterCustomers(this.value)"></div>';
+    if (!res.items.length) {
+      html += '<div class="empty">Kayıt bulunamadı.</div>';
+    } else {
+      html += res.items.map(function (m) {
+        return '<div class="list-item" onclick="App.openCustomer(\'' + m.MusteriID + '\')">' +
+          '<div><b>' + esc(m.AdSoyad) + '</b><div class="meta">' + esc(m.Telefon || '—') + '</div></div>' +
+          '<div class="meta">›</div></div>';
+      }).join('');
+      html +=
+        '<div class="pagination">' +
+          '<button class="btn secondary sm" ' + (res.page <= 1 ? 'disabled' : '') + ' onclick="App.custPage(' + (res.page - 1) + ')">‹ Önceki</button>' +
+          '<span class="muted">' + res.page + ' / ' + totalPages + '</span>' +
+          '<button class="btn secondary sm" ' + (res.page >= totalPages ? 'disabled' : '') + ' onclick="App.custPage(' + (res.page + 1) + ')">Sonraki ›</button>' +
+        '</div>';
+    }
+    html += '</div>';
+    setView(html);
+  }
+  var custFilterTimer = null;
+  function filterCustomers(v) {
+    clearTimeout(custFilterTimer);
+    custFilterTimer = setTimeout(function () {
+      state.customerQuery = v; state.customerPage = 1;
+      call('getCustomers', [state.customerQuery, 1, 20]).then(renderCustomers);
+    }, 300);
+  }
+  function custPage(p) { state.customerPage = p; loadCustomers(); }
+
+  function newCustomerModal(prefill) {
+    customerForm(null, prefill);
+  }
+  function customerForm(c, prefill) {
+    c = c || {};
+    var title = c.MusteriID ? 'Müşteriyi Düzenle' : 'Yeni Müşteri';
+    openModal(title,
+      field('Ad Soyad *', '<input id="cAd" value="' + esc(c.AdSoyad || '') + '">') +
+      field('Telefon', '<input id="cTel" placeholder="05xx..." value="' + esc(c.Telefon || (prefill && prefill.tel) || '') + '">') +
+      field('Notlar', '<textarea id="cNot">' + esc(c.Notlar || '') + '</textarea>'),
+      [
+        { label: 'İptal', cls: 'secondary', fn: closeModal },
+        { label: 'Kaydet', cls: '', fn: function () {
+          var data = {
+            MusteriID: c.MusteriID || '',
+            AdSoyad: $('#cAd').value.trim(),
+            Telefon: $('#cTel').value.trim(),
+            Notlar: $('#cNot').value.trim()
+          };
+          if (!data.AdSoyad) { toast('Ad Soyad zorunlu', 'err'); return; }
+          call('saveCustomer', [data]).then(function (id) {
+            closeModal(); toast('Müşteri kaydedildi', 'ok');
+            openCustomer(id);
+          }).catch(failHandler);
+        } }
+      ]
+    );
+  }
+
+  function openCustomer(id) {
+    activateTab('customers');
+    setView('<div class="loading">Yükleniyor…</div>');
+    call('getCustomerWithVehicles', [id]).then(renderCustomer).catch(failHandler);
+  }
+  function renderCustomer(d) {
+    var m = d.musteri;
+    var html =
+      '<div class="breadcrumb" onclick="App.tab(\'customers\')">‹ Müşteriler</div>' +
+      '<div class="card">' +
+        '<div class="section-head"><h2>' + esc(m.AdSoyad) + '</h2>' +
+        '<div class="btn-row">' +
+          '<button class="btn secondary sm" onclick=\'App.editCustomer(' + JSON.stringify(m) + ')\'>Düzenle</button>' +
+          '<button class="btn red sm" onclick="App.delCustomer(\'' + m.MusteriID + '\')">Sil</button>' +
+        '</div></div>' +
+        '<div class="meta">📞 ' + esc(m.Telefon || '—') + '</div>' +
+        (m.Notlar ? '<div class="meta">📝 ' + esc(m.Notlar) + '</div>' : '') +
+      '</div>' +
+      '<div class="card">' +
+        '<div class="section-head"><h3>Araçlar (' + d.araclar.length + ')</h3>' +
+        '<button class="btn sm" onclick="App.newVehicleModal(\'' + m.MusteriID + '\')">+ Araç Ekle</button></div>';
+    if (!d.araclar.length) html += '<div class="empty">Henüz araç yok.</div>';
+    else html += d.araclar.map(function (a) {
+      return '<div class="list-item" onclick="App.openVehicle(\'' + a.AracID + '\')">' +
+        '<div><b class="sr-plaka">' + esc(a.Plaka) + '</b> <span class="badge tur">' + esc(a.Tur) + '</span>' +
+        '<div class="meta">' + esc(a.Marka) + ' ' + esc(a.Model) + ' ' + esc(a.Yil || '') + '</div></div>' +
+        '<div class="meta">›</div></div>';
+    }).join('');
+    html += '</div>';
+    setView(html);
+  }
+  function editCustomer(m) { customerForm(m); }
+  function delCustomer(id) {
+    confirmModal('Müşteri silinsin mi? (Geçmiş kayıtlar korunur, müşteri pasifleştirilir.)', function () {
+      call('deleteCustomer', [id]).then(function () {
+        toast('Müşteri silindi', 'ok'); tab('customers');
+      }).catch(failHandler);
+    });
+  }
+
+  /* =======================================================================
+   * ARAÇLAR
+   * ===================================================================== */
+  function newVehicleModal(musteriId) { vehicleForm({ MusteriID: musteriId }); }
+  function vehicleForm(a) {
+    a = a || {};
+    var title = a.AracID ? 'Aracı Düzenle' : 'Yeni Araç';
+    var turOpts = ['Otomobil', 'Motosiklet'].map(function (t) {
+      return '<option ' + (a.Tur === t ? 'selected' : '') + '>' + t + '</option>';
+    }).join('');
+    openModal(title,
+      field('Plaka *', '<input id="vPlaka" style="text-transform:uppercase" value="' + esc(a.Plaka || '') + '">') +
+      field('Tür', '<select id="vTur">' + turOpts + '</select>') +
+      '<div class="row">' +
+        field('Marka', '<input id="vMarka" value="' + esc(a.Marka || '') + '">') +
+        field('Model', '<input id="vModel" value="' + esc(a.Model || '') + '">') +
+        field('Yıl', '<input id="vYil" inputmode="numeric" value="' + esc(a.Yil || '') + '">') +
+      '</div>' +
+      field('Şasi / Notlar', '<textarea id="vNot">' + esc(a.Notlar || '') + '</textarea>'),
+      [
+        { label: 'İptal', cls: 'secondary', fn: closeModal },
+        { label: 'Kaydet', cls: '', fn: function () {
+          var data = {
+            AracID: a.AracID || '', MusteriID: a.MusteriID,
+            Plaka: $('#vPlaka').value.trim(), Tur: $('#vTur').value,
+            Marka: $('#vMarka').value.trim(), Model: $('#vModel').value.trim(),
+            Yil: $('#vYil').value.trim(), Notlar: $('#vNot').value.trim()
+          };
+          if (!data.Plaka) { toast('Plaka zorunlu', 'err'); return; }
+          call('saveVehicle', [data]).then(function (id) {
+            closeModal(); toast('Araç kaydedildi', 'ok'); openVehicle(id);
+          }).catch(failHandler);
+        } }
+      ]
+    );
+  }
+
+  function openVehicle(aracId) {
+    hideSearch();
+    $('#globalSearch').value = '';
+    setView('<div class="loading">Yükleniyor…</div>');
+    call('getVehicleHistory', [aracId]).then(renderVehicle).catch(failHandler);
+  }
+  function renderVehicle(d) {
+    var a = d.arac, m = d.musteri;
+    var html =
+      (m.MusteriID ? '<div class="breadcrumb" onclick="App.openCustomer(\'' + m.MusteriID + '\')">‹ ' + esc(m.AdSoyad) + '</div>' : '') +
+      '<div class="card">' +
+        '<div class="section-head">' +
+          '<h2 class="sr-plaka">' + esc(a.Plaka) + ' <span class="badge tur">' + esc(a.Tur) + '</span></h2>' +
+          '<button class="btn secondary sm" onclick=\'App.editVehicle(' + JSON.stringify(a) + ')\'>Düzenle</button>' +
+        '</div>' +
+        '<div class="meta">' + esc(a.Marka) + ' ' + esc(a.Model) + ' ' + esc(a.Yil || '') + '</div>' +
+        '<div class="meta">👤 ' + esc(m.AdSoyad || '—') + '  📞 ' + esc(m.Telefon || '—') + '</div>' +
+        (a.Notlar ? '<div class="meta">📝 ' + esc(a.Notlar) + '</div>' : '') +
+      '</div>' +
+      '<div class="card">' +
+        '<div class="section-head"><h3>Servis Geçmişi (' + d.servisler.length + ')</h3>' +
+        '<button class="btn" onclick="App.newService(\'' + a.AracID + '\')">+ Yeni İş Emri</button></div>';
+    if (!d.servisler.length) {
+      html += '<div class="empty">Bu araca ait iş emri yok.</div>';
+    } else {
+      html += '<table><thead><tr><th>No</th><th>Tarih</th><th>Durum</th><th class="right">Tutar</th></tr></thead><tbody>' +
+        d.servisler.map(function (s) {
+          return '<tr style="cursor:pointer" onclick="App.openService(\'' + s.ServisID + '\')">' +
+            '<td><b>' + esc(s.ServisNo) + '</b></td>' +
+            '<td>' + esc(s.Tarih) + '</td>' +
+            '<td><span class="' + badgeClass(s.Durum) + '">' + esc(s.Durum) + '</span></td>' +
+            '<td class="right">' + money(s.GenelToplam) + '</td></tr>';
+        }).join('') +
+        '</tbody></table>' +
+        '<div class="total-line grand"><span>Ömür Boyu Toplam</span><span>' + money(d.omurToplam) + '</span></div>';
+    }
+    html += '</div>';
+    setView(html);
+  }
+  function editVehicle(a) { vehicleForm(a); }
+
+  /* =======================================================================
+   * SERVİS / İŞ EMRİ DETAYI
+   * ===================================================================== */
+  function newService(aracId) {
+    call('createService', [aracId]).then(function (servisId) {
+      toast('Yeni iş emri açıldı', 'ok'); openService(servisId);
+    }).catch(failHandler);
+  }
+  function openService(servisId) {
+    setView('<div class="loading">Yükleniyor…</div>');
+    call('getServiceDetail', [servisId]).then(renderService).catch(failHandler);
+  }
+  function renderService(d) {
+    var s = d.servis, a = d.arac, m = d.musteri;
+    var araToplam = s.IscilikToplam + s.ParcaToplam;
+    var durumOpts = state.durumlar.map(function (x) {
+      return '<option ' + (s.Durum === x ? 'selected' : '') + '>' + x + '</option>';
+    }).join('');
+
+    var html =
+      '<div class="breadcrumb" onclick="App.openVehicle(\'' + a.AracID + '\')">‹ ' + esc(a.Plaka) + ' geçmişi</div>' +
+      '<div class="card">' +
+        '<div class="section-head">' +
+          '<h2>İş Emri ' + esc(s.ServisNo) + '</h2>' +
+          '<select onchange="App.changeStatus(\'' + s.ServisID + '\', this.value)" style="width:auto">' + durumOpts + '</select>' +
+        '</div>' +
+        '<div class="meta sr-plaka">' + esc(a.Plaka) + ' · ' + esc(a.Marka) + ' ' + esc(a.Model) + '</div>' +
+        '<div class="meta">👤 ' + esc(m.AdSoyad || '—') + '  📞 ' + esc(m.Telefon || '—') + '  📅 ' + esc(s.Tarih) + '</div>' +
+        '<div class="field" style="margin-top:10px"><label>Genel Not</label>' +
+          '<textarea id="svcNot" onblur="App.saveNot(\'' + s.ServisID + '\', this.value)">' + esc(s.GenelNot || '') + '</textarea></div>' +
+      '</div>' +
+
+      /* İŞÇİLİK */
+      '<div class="card">' +
+        '<h3>🔧 İşçilik</h3>' +
+        '<table><thead><tr><th>Açıklama</th><th class="right">Tutar</th><th></th></tr></thead><tbody>' +
+        (d.iscilikler.length ? d.iscilikler.map(function (i) {
+          return '<tr><td>' + esc(i.Aciklama) + '</td><td class="right">' + money(i.Tutar) + '</td>' +
+            '<td class="right"><button class="btn red sm" onclick="App.delIscilik(\'' + s.ServisID + '\',\'' + i.KalemID + '\')">✕</button></td></tr>';
+        }).join('') : '<tr><td colspan="3" class="muted">Kalem yok.</td></tr>') +
+        '</tbody></table>' +
+        '<div class="row" style="margin-top:10px;align-items:flex-end">' +
+          '<div style="flex:3"><label>Açıklama</label><input id="iAciklama" placeholder="Örn: Yağ değişimi işçiliği"></div>' +
+          '<div style="flex:1"><label>Tutar</label><input id="iTutar" inputmode="decimal" placeholder="0"></div>' +
+          '<button class="btn sm" onclick="App.addIscilik(\'' + s.ServisID + '\')">Ekle</button>' +
+        '</div>' +
+      '</div>' +
+
+      /* PARÇA */
+      '<div class="card">' +
+        '<h3>🧩 Parça</h3>' +
+        '<table><thead><tr><th>Parça</th><th class="right hide-sm">Adet</th><th class="right hide-sm">Birim</th><th class="right">Tutar</th><th></th></tr></thead><tbody>' +
+        (d.parcalar.length ? d.parcalar.map(function (p) {
+          return '<tr><td>' + esc(p.ParcaAdi) + '</td>' +
+            '<td class="right hide-sm">' + p.Adet + '</td>' +
+            '<td class="right hide-sm">' + money(p.BirimFiyat) + '</td>' +
+            '<td class="right">' + money(p.Tutar) + '</td>' +
+            '<td class="right"><button class="btn red sm" onclick="App.delParca(\'' + s.ServisID + '\',\'' + p.KalemID + '\')">✕</button></td></tr>';
+        }).join('') : '<tr><td colspan="5" class="muted">Kalem yok.</td></tr>') +
+        '</tbody></table>' +
+        '<div class="row" style="margin-top:10px;align-items:flex-end">' +
+          '<div style="flex:3"><label>Parça Adı</label><input id="pAd" placeholder="Örn: Yağ filtresi"></div>' +
+          '<div style="flex:1"><label>Adet</label><input id="pAdet" inputmode="decimal" value="1"></div>' +
+          '<div style="flex:1"><label>Birim Fiyat</label><input id="pFiyat" inputmode="decimal" placeholder="0"></div>' +
+          '<button class="btn sm" onclick="App.addParca(\'' + s.ServisID + '\')">Ekle</button>' +
+        '</div>' +
+      '</div>' +
+
+      /* TOPLAM + KDV */
+      '<div class="card">' +
+        '<h3>💰 Toplam</h3>' +
+        '<div class="total-line"><span>İşçilik</span><span>' + money(s.IscilikToplam) + '</span></div>' +
+        '<div class="total-line"><span>Parça</span><span>' + money(s.ParcaToplam) + '</span></div>' +
+        '<div class="total-line"><span>Ara Toplam</span><span>' + money(araToplam) + '</span></div>' +
+        '<div class="row" style="margin:10px 0;align-items:flex-end">' +
+          '<div style="flex:1"><label>KDV Oranı (%)</label><input id="kdvOran" inputmode="decimal" value="' + s.KdvOrani + '" onchange="App.saveKdv(\'' + s.ServisID + '\')"></div>' +
+          '<div style="flex:2" class="checkbox-field"><input type="checkbox" id="kdvDahil" ' + (s.KdvDahil ? 'checked' : '') + ' onchange="App.saveKdv(\'' + s.ServisID + '\')"><label style="margin:0">Fiyatlara KDV dahil</label></div>' +
+        '</div>' +
+        '<div class="total-line"><span>KDV (' + s.KdvOrani + '%)' + (s.KdvDahil ? ' <span class="muted">dahil</span>' : '') + '</span><span>' + money(s.KdvTutar) + '</span></div>' +
+        '<div class="total-line grand"><span>GENEL TOPLAM</span><span>' + money(s.GenelToplam) + '</span></div>' +
+        '<div class="btn-row" style="margin-top:14px">' +
+          '<button class="btn green" onclick="App.showSummary(\'' + s.ServisID + '\')">📄 Müşteri Özeti</button>' +
+          '<button class="btn red secondary" onclick="App.delService(\'' + s.ServisID + '\',\'' + a.AracID + '\')">İş Emrini Sil</button>' +
+        '</div>' +
+      '</div>';
+    setView(html);
+  }
+
+  function changeStatus(id, durum) {
+    call('updateServiceStatus', [id, durum]).then(function () { toast('Durum güncellendi', 'ok'); }).catch(failHandler);
+  }
+  function saveNot(id, val) {
+    call('updateServiceMeta', [id, { GenelNot: val }]).catch(failHandler);
+  }
+  function saveKdv(id) {
+    var oran = $('#kdvOran').value;
+    var dahil = $('#kdvDahil').checked;
+    call('updateServiceMeta', [id, { KdvOrani: oran, KdvDahil: dahil }]).then(renderService).catch(failHandler);
+  }
+  function addIscilik(id) {
+    var ac = $('#iAciklama').value.trim(), tu = $('#iTutar').value;
+    if (!ac) { toast('Açıklama girin', 'err'); return; }
+    call('addIscilik', [id, ac, tu]).then(renderService).catch(failHandler);
+  }
+  function delIscilik(id, kid) { call('deleteIscilik', [id, kid]).then(renderService).catch(failHandler); }
+  function addParca(id) {
+    var ad = $('#pAd').value.trim(), adet = $('#pAdet').value, fiyat = $('#pFiyat').value;
+    if (!ad) { toast('Parça adı girin', 'err'); return; }
+    call('addParca', [id, ad, adet, fiyat]).then(renderService).catch(failHandler);
+  }
+  function delParca(id, kid) { call('deleteParca', [id, kid]).then(renderService).catch(failHandler); }
+  function delService(id, aracId) {
+    confirmModal('Bu iş emri ve tüm kalemleri kalıcı olarak silinecek. Emin misiniz?', function () {
+      call('deleteService', [id]).then(function () { toast('İş emri silindi', 'ok'); openVehicle(aracId); }).catch(failHandler);
+    });
+  }
+
+  /* =======================================================================
+   * MÜŞTERİ ÖZETİ — yazdır + WhatsApp
+   * ===================================================================== */
+  function showSummary(servisId) {
+    call('getSummary', [servisId]).then(function (d) {
+      var s = d.servis, a = d.arac, m = d.musteri, f = d.firma;
+      var araToplam = s.IscilikToplam + s.ParcaToplam;
+
+      var body =
+        '<div class="summary-sheet" id="summarySheet">' +
+          '<div class="summary-head">' +
+            '<div><h2 style="margin:0">' + esc(f.firmaAdi) + '</h2>' +
+              (f.firmaTelefon ? '<div>📞 ' + esc(f.firmaTelefon) + '</div>' : '') +
+              (f.firmaAdres ? '<div>' + esc(f.firmaAdres) + '</div>' : '') +
+            '</div>' +
+            '<div style="text-align:right"><b>İş Emri ' + esc(s.ServisNo) + '</b><br>' + esc(s.Tarih) + '<br>' +
+              '<span class="' + badgeClass(s.Durum) + '">' + esc(s.Durum) + '</span></div>' +
+          '</div>' +
+          '<p><b>Müşteri:</b> ' + esc(m.AdSoyad || '—') + ' &nbsp; <b>Tel:</b> ' + esc(m.Telefon || '—') + '<br>' +
+          '<b>Araç:</b> ' + esc(a.Plaka) + ' — ' + esc(a.Marka) + ' ' + esc(a.Model) + ' ' + esc(a.Yil || '') + ' (' + esc(a.Tur) + ')</p>' +
+          (s.GenelNot ? '<p><b>Not:</b> ' + esc(s.GenelNot) + '</p>' : '') +
+
+          (d.iscilikler.length ? '<h3>İşçilik</h3><table><tbody>' +
+            d.iscilikler.map(function (i) {
+              return '<tr><td>' + esc(i.Aciklama) + '</td><td class="right">' + money(i.Tutar) + '</td></tr>';
+            }).join('') + '</tbody></table>' : '') +
+
+          (d.parcalar.length ? '<h3>Parça</h3><table><thead><tr><th>Parça</th><th class="right">Adet</th><th class="right">Birim</th><th class="right">Tutar</th></tr></thead><tbody>' +
+            d.parcalar.map(function (p) {
+              return '<tr><td>' + esc(p.ParcaAdi) + '</td><td class="right">' + p.Adet + '</td><td class="right">' + money(p.BirimFiyat) + '</td><td class="right">' + money(p.Tutar) + '</td></tr>';
+            }).join('') + '</tbody></table>' : '') +
+
+          '<div style="margin-top:16px">' +
+            '<div class="total-line"><span>İşçilik Toplam</span><span>' + money(s.IscilikToplam) + '</span></div>' +
+            '<div class="total-line"><span>Parça Toplam</span><span>' + money(s.ParcaToplam) + '</span></div>' +
+            '<div class="total-line"><span>Ara Toplam</span><span>' + money(araToplam) + '</span></div>' +
+            '<div class="total-line"><span>KDV (' + s.KdvOrani + '%)' + (s.KdvDahil ? ' dahil' : '') + '</span><span>' + money(s.KdvTutar) + '</span></div>' +
+            '<div class="total-line grand"><span>GENEL TOPLAM</span><span>' + money(s.GenelToplam) + '</span></div>' +
+          '</div>' +
+        '</div>';
+
+      openModal('Müşteri Özeti', body, [
+        { label: 'Kapat', cls: 'secondary', fn: closeModal },
+        { label: '🖨️ Yazdır', cls: 'secondary', fn: function () { window.print(); } },
+        { label: '🟢 WhatsApp', cls: 'green', fn: function () { sendWhatsApp(d); } }
+      ], 'wide');
+    }).catch(failHandler);
+  }
+
+  function sendWhatsApp(d) {
+    var s = d.servis, a = d.arac, m = d.musteri, f = d.firma;
+    var L = [];
+    L.push('*' + f.firmaAdi + '*');
+    L.push('İş Emri: ' + s.ServisNo + ' (' + s.Tarih + ')');
+    L.push('Araç: ' + a.Plaka + ' - ' + a.Marka + ' ' + a.Model);
+    L.push('');
+    if (d.iscilikler.length) {
+      L.push('🔧 *İşçilik*');
+      d.iscilikler.forEach(function (i) { L.push('• ' + i.Aciklama + ': ' + money(i.Tutar)); });
+      L.push('');
+    }
+    if (d.parcalar.length) {
+      L.push('🧩 *Parça*');
+      d.parcalar.forEach(function (p) { L.push('• ' + p.ParcaAdi + ' x' + p.Adet + ': ' + money(p.Tutar)); });
+      L.push('');
+    }
+    L.push('İşçilik: ' + money(s.IscilikToplam));
+    L.push('Parça: ' + money(s.ParcaToplam));
+    L.push('KDV (' + s.KdvOrani + '%)' + (s.KdvDahil ? ' dahil' : '') + ': ' + money(s.KdvTutar));
+    L.push('*GENEL TOPLAM: ' + money(s.GenelToplam) + '*');
+
+    var text = encodeURIComponent(L.join('\n'));
+    var tel = ('' + (m.Telefon || '')).replace(/\D/g, '');
+    if (tel.length === 10) tel = '90' + tel;                 // 5xx... -> 905xx...
+    else if (tel.length === 11 && tel.charAt(0) === '0') tel = '90' + tel.substring(1); // 05xx... -> 905xx...
+    var url = (tel ? 'https://wa.me/' + tel : 'https://wa.me/') + '?text=' + text;
+    window.open(url, '_blank');
+  }
+
+  /* =======================================================================
+   * AYARLAR
+   * ===================================================================== */
+  function openSettings() {
+    var s = state.settings;
+    openModal('Ayarlar',
+      field('Firma Adı', '<input id="setAd" value="' + esc(s.firmaAdi) + '">') +
+      field('Firma Telefonu', '<input id="setTel" value="' + esc(s.firmaTelefon) + '">') +
+      field('Firma Adresi', '<textarea id="setAdres">' + esc(s.firmaAdres) + '</textarea>') +
+      field('Varsayılan KDV Oranı (%)', '<input id="setKdv" inputmode="decimal" value="' + esc(s.kdvOrani) + '">'),
+      [
+        { label: 'İptal', cls: 'secondary', fn: closeModal },
+        { label: 'Kaydet', cls: '', fn: function () {
+          var data = {
+            firmaAdi: $('#setAd').value.trim(),
+            firmaTelefon: $('#setTel').value.trim(),
+            firmaAdres: $('#setAdres').value.trim(),
+            kdvOrani: $('#setKdv').value
+          };
+          call('saveSettings', [data]).then(function (res) {
+            state.settings = res;
+            $('#brandName').textContent = res.firmaAdi || 'OtoKay-T';
+            closeModal(); toast('Ayarlar kaydedildi', 'ok');
+          }).catch(failHandler);
+        } }
+      ]
+    );
+  }
+
+  /* =======================================================================
+   * MODAL / GENEL
+   * ===================================================================== */
+  function field(label, inputHtml) {
+    return '<div class="field"><label>' + label + '</label>' + inputHtml + '</div>';
+  }
+  function openModal(title, bodyHtml, buttons, extraCls) {
+    var footer = (buttons || []).map(function (b, idx) {
+      return '<button class="btn ' + (b.cls || '') + '" data-mbtn="' + idx + '">' + b.label + '</button>';
+    }).join('');
+    var overlay = el(
+      '<div class="modal-overlay">' +
+        '<div class="modal ' + (extraCls || '') + '">' +
+          '<div class="modal-head"><h3>' + esc(title) + '</h3>' +
+            '<button class="icon-btn no-print" data-mclose>✕</button></div>' +
+          '<div class="modal-body">' + bodyHtml + '</div>' +
+          (footer ? '<div class="modal-foot">' + footer + '</div>' : '') +
+        '</div>' +
+      '</div>'
+    );
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) closeModal(); });
+    overlay.querySelector('[data-mclose]').addEventListener('click', closeModal);
+    (buttons || []).forEach(function (b, idx) {
+      overlay.querySelector('[data-mbtn="' + idx + '"]').addEventListener('click', b.fn);
+    });
+    $('#modalRoot').innerHTML = '';
+    $('#modalRoot').appendChild(overlay);
+  }
+  function closeModal() { $('#modalRoot').innerHTML = ''; }
+  function confirmModal(msg, onYes) {
+    openModal('Onay', '<p>' + esc(msg) + '</p>', [
+      { label: 'Vazgeç', cls: 'secondary', fn: closeModal },
+      { label: 'Evet', cls: 'red', fn: function () { closeModal(); onYes(); } }
+    ]);
+  }
+  function failHandler(e) {
+    console.error(e);
+    toast((e && e.message) ? e.message : 'Bir hata oluştu', 'err');
+  }
+
+  /* ---- Dışa açılan API ---- */
+  return {
+    init: init, goHome: goHome, tab: tab,
+    onSearchInput: onSearchInput, onSearchKey: onSearchKey,
+    loadCustomers: loadCustomers, filterCustomers: filterCustomers, custPage: custPage,
+    newCustomerModal: newCustomerModal, openCustomer: openCustomer, editCustomer: editCustomer, delCustomer: delCustomer,
+    newVehicleModal: newVehicleModal, openVehicle: openVehicle, editVehicle: editVehicle,
+    newService: newService, openService: openService, changeStatus: changeStatus,
+    saveNot: saveNot, saveKdv: saveKdv,
+    addIscilik: addIscilik, delIscilik: delIscilik, addParca: addParca, delParca: delParca,
+    delService: delService, showSummary: showSummary, openSettings: openSettings
+  };
+})();
+
+window.addEventListener('DOMContentLoaded', App.init);
+</script>

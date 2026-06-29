@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <?!= include('Stylesheet'); ?>
+</head>
+<body>
+  <!-- ÜST BAR -->
+  <header class="topbar">
+    <div class="brand" onclick="App.goHome()">
+      <span class="logo">🔧</span>
+      <span class="brand-name" id="brandName">OtoKay-T</span>
+    </div>
+    <div class="search-wrap">
+      <input id="globalSearch" type="search" autocomplete="off"
+             placeholder="Plaka, müşteri adı veya telefon ara..."
+             oninput="App.onSearchInput()" onkeydown="App.onSearchKey(event)">
+      <div id="searchResults" class="search-results hidden"></div>
+    </div>
+    <button class="icon-btn" title="Ayarlar" onclick="App.openSettings()">⚙️</button>
+  </header>
+
+  <!-- SEKME ÇUBUĞU -->
+  <nav class="tabs">
+    <button class="tab active" data-tab="home" onclick="App.tab('home')">🏠 Ana Sayfa</button>
+    <button class="tab" data-tab="customers" onclick="App.tab('customers')">👤 Müşteriler</button>
+  </nav>
+
+  <main id="view"><div class="loading">Yükleniyor…</div></main>
+
+  <!-- MODAL KATMANI -->
+  <div id="modalRoot"></div>
+
+  <!-- TOAST -->
+  <div id="toast" class="toast hidden"></div>
+
+  <?!= include('JavaScript'); ?>
+</body>
+</html>
